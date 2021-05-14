@@ -1,6 +1,7 @@
 use solana_program::{
   account_info::{next_account_info, AccountInfo},
   entrypoint::ProgramResult,
+  instruction::AccountMeta,
   msg,
   program::{invoke, invoke_signed},
   program_error::ProgramError,
@@ -10,7 +11,11 @@ use solana_program::{
   sysvar::{rent::Rent, Sysvar},
 };
 
-use crate::{error::VaultError, instruction::VaultInstruction, state::Vault};
+use crate::{
+  error::VaultError,
+  instruction::{StrategyInstruction, VaultInstruction},
+  state::Vault,
+};
 
 pub struct Processor;
 impl Processor {
@@ -21,6 +26,11 @@ impl Processor {
   ) -> ProgramResult {
     msg!("Unpacking instruction");
     let instruction = VaultInstruction::unpack(instruction_data)?;
+    // TODO(011): Remove dev logs or gate.
+    let account_info_iter = &mut accounts.iter();
+    for (i, account) in account_info_iter.enumerate() {
+      msg!("account #{}:  {}", i, account.key);
+    }
 
     match instruction {
       VaultInstruction::InitializeVault {
@@ -177,21 +187,24 @@ impl Processor {
     amount: u64,
     is_deposit: bool,
   ) -> ProgramResult {
-    msg!("Transferring");
     let account_info_iter = &mut accounts.iter();
-
     let token_program = next_account_info(account_info_iter)?;
     let source_token_account = next_account_info(account_info_iter)?;
     let target_token_account = next_account_info(account_info_iter)?;
-
     // Additional account metas:
     // TODO(009): Support more than one source authority.
     let source_authority = next_account_info(account_info_iter)?;
     let storage_account = next_account_info(account_info_iter)?;
+    let strategy_program = next_account_info(account_info_iter)?;
 
     let storage_info = Vault::unpack_unchecked(&storage_account.data.borrow())?;
     if !storage_info.is_initialized() {
       msg!("Storage not configured!");
+      return Err(VaultError::InvalidInstruction.into());
+    }
+
+    if *strategy_program.key != storage_info.strategy_program_id {
+      msg!("Invalid strategy program provided!");
       return Err(VaultError::InvalidInstruction.into());
     }
 
@@ -204,7 +217,8 @@ impl Processor {
       msg!("Transfer & burn lX tokens from client");
     }
 
-    // Check if this is a HODL Vault; if so, we deposit & withdraw from 
+    let (pda, bump_seed) = Pubkey::find_program_address(&[b"vault"], program_id);
+    // Check if this is a HODL Vault; if so, we deposit & withdraw from
     if storage_info.hodl {
       let x_token_account = next_account_info(account_info_iter)?;
       msg!("Calling the token program to transfer tokens");
@@ -228,7 +242,6 @@ impl Processor {
           ],
         )?;
       } else {
-        let (pda, bump_seed) = Pubkey::find_program_address(&[b"vault"], program_id);
         let transfer_to_client_ix = spl_token::instruction::transfer(
           token_program.key,
           x_token_account.key,
@@ -249,16 +262,53 @@ impl Processor {
           &[&[&b"vault"[..], &[bump_seed]]],
         )?;
       }
-    }
-    else {
+    } else {
+      // Pass through the source authority above the extra signers.
+      let mut account_metas = vec![AccountMeta::new_readonly(*source_authority.key, true)];
+      account_metas.extend(account_info_iter
+        .map(|account| {
+          if account.is_writable {
+            AccountMeta::new(*account.key, account.is_signer)
+          } else {
+            AccountMeta::new_readonly(*account.key, account.is_signer)
+          }
+        })
+        .collect::<Vec<AccountMeta>>());
+
       if is_deposit {
-        // TODO(003): implement.
-        msg!("Depositing into strategy");
-        return Err(VaultError::NotImplemented.into());
+        msg!("Depositing into strategy {}", storage_info.strategy_program_deposit_instruction_id);
+        let instruction = StrategyInstruction::deposit(
+          storage_info.strategy_program_deposit_instruction_id,
+          program_id,
+          &token_program.key,
+          &source_token_account.key,
+          &target_token_account.key,
+          // Pass along any additional accounts.
+          account_metas,
+          amount,
+        )?;
+        invoke(
+          &instruction,
+          &accounts,
+        )?;
+        
       } else {
-        // TODO(003): implement.
-        msg!("Withdrawing from strategy");
-        return Err(VaultError::NotImplemented.into());
+        msg!("Withdrawing from strategy {}", storage_info.strategy_program_withdraw_instruction_id);
+        let instruction = StrategyInstruction::withdraw(
+          storage_info.strategy_program_withdraw_instruction_id,
+          program_id,
+          &token_program.key,
+          &source_token_account.key,
+          &target_token_account.key,
+          // Pass along any additional accounts.
+          account_metas,
+          amount,
+        )?;
+        invoke_signed(
+          &instruction,
+          &accounts,
+          &[&[&b"vault"[..], &[bump_seed]]],
+        )?;
       }
     }
     Ok(())

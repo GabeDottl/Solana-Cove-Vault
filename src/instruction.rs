@@ -66,7 +66,8 @@ pub enum VaultInstruction {
     /// 3. `[]` The target wallet for llX tokens.
     /// 4+ `[]` Source signers
     /// 5. `[]` The Vault storage account.
-    /// 6. `[]` (Optional) X SPL account owned by Vault if hodling.
+    /// 6. `[]` The strategy program.
+    /// 7. `[]` (Optional) X SPL account owned by Vault if hodling.
     /// TODO(009):: Signer pubkeys for multisignature wallets - need signer_num param.
     Deposit { amount: u64 },
 
@@ -78,7 +79,8 @@ pub enum VaultInstruction {
     /// 3. `[]` Target token (X) wallet target.
     /// 4+ `[]` Source signers
     /// 5. `[]` The Vault storage account.
-    /// 6. `[]` (Optional) X SPL account owned by Vault if hodling.
+    /// 6. `[]` The strategy program.
+    /// 7. `[]` (Optional) X SPL account owned by Vault if hodling.
     /// TODO(009):: Signer pubkeys for multisignature wallets - need signer_num param.
     Withdraw {
         amount: u64, // # of derivative tokens.
@@ -88,7 +90,6 @@ pub enum VaultInstruction {
 // Strategy programs should implement the following interface for strategies.
 // TODO(010): Refactor this to share more with VaultInstruction?
 pub enum StrategyInstruction {
-    
     /// Deposits a given token into the strategy.
     ///
     /// Accounts expected:
@@ -116,36 +117,24 @@ pub enum StrategyInstruction {
 
 impl StrategyInstruction {
     /// Unpacks a byte buffer into a [VaultInstruction](enum.VaultInstruction.html).
-    pub fn unpack(input: &[u8]) -> Result<Self, ProgramError> {
-        let (tag, rest) = input.split_first().ok_or(InvalidInstruction)?;
-
-        Ok(match tag {
-            0 | 1 => {
-                let amount = rest
-                    .get(..8)
-                    .and_then(|slice| slice.try_into().ok())
-                    .map(u64::from_le_bytes)
-                    .ok_or(InvalidInstruction)?;
-                match tag {
-                    1 => Self::Deposit { amount },
-                    2 => Self::Withdraw { amount },
-                    _ => return Err(VaultError::InvalidInstruction.into()),
-                }
-            }
-            _ => return Err(VaultError::InvalidInstruction.into()),
-        })
+    pub fn unpack(input: &[u8], is_deposit: bool) -> Result<Self, ProgramError> {
+        let (_tag, rest) = input.split_first().ok_or(InvalidInstruction)?;
+        let amount = rest
+        .get(..8)
+        .and_then(|slice| slice.try_into().ok())
+        .map(u64::from_le_bytes)
+        .ok_or(InvalidInstruction)?;
+        Ok(if is_deposit {Self::Deposit{amount}} else {Self::Withdraw{amount}})
     }
 
-    fn pack(&self) -> Vec<u8> {
+    fn pack(&self, instruction_id: u8) -> Vec<u8> {
         let mut buf = Vec::with_capacity(size_of::<Self>());
+        buf.push(instruction_id);
         match self {
             &Self::Deposit { amount } => {
-                buf.push(2);
                 buf.extend_from_slice(&amount.to_le_bytes());
             }
-
             &Self::Withdraw { amount } => {
-                buf.push(3);
                 buf.extend_from_slice(&amount.to_le_bytes());
             }
         }
@@ -153,6 +142,7 @@ impl StrategyInstruction {
     }
 
     pub fn deposit(
+        instruction_id: u8,
         program_id: &Pubkey,
         token_program_id: &Pubkey,
         source_pubkey: &Pubkey,
@@ -161,7 +151,7 @@ impl StrategyInstruction {
         amount: u64,
     ) -> Result<Instruction, ProgramError> {
         return create_transfer(
-            Self::Deposit { amount }.pack(),
+            Self::Deposit { amount }.pack(instruction_id),
             program_id,
             token_program_id,
             source_pubkey,
@@ -171,6 +161,7 @@ impl StrategyInstruction {
     }
 
     pub fn withdraw(
+        instruction_id: u8,
         program_id: &Pubkey,
         token_program_id: &Pubkey,
         source_pubkey: &Pubkey,
@@ -179,7 +170,7 @@ impl StrategyInstruction {
         amount: u64,
     ) -> Result<Instruction, ProgramError> {
         return create_transfer(
-            Self::Withdraw { amount }.pack(),
+            Self::Withdraw { amount }.pack(instruction_id),
             program_id,
             token_program_id,
             source_pubkey,
@@ -197,8 +188,8 @@ impl VaultInstruction {
         Ok(match tag {
             0 => {
                 let hodl = *rest.get(0).unwrap();
-                let strategy_program_deposit_instruction_id = *rest.get(0).unwrap();
-                let strategy_program_withdraw_instruction_id = *rest.get(1).unwrap();
+                let strategy_program_deposit_instruction_id = *rest.get(1).unwrap();
+                let strategy_program_withdraw_instruction_id = *rest.get(2).unwrap();
                 Self::InitializeVault {
                     hodl: if hodl == 1 { true } else { false },
                     strategy_program_deposit_instruction_id,
