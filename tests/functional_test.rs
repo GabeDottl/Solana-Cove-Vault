@@ -1,26 +1,24 @@
 #![cfg(feature = "test-bpf")]
 
 use {
-  ::Vault::{entrypoint::process_instruction, id, instruction::VaultInstruction, state::Vault},
+  ::Vault::{state, instruction::VaultInstruction},
   assert_matches::*,
   solana_program::{
-    borsh::get_packed_len,
-    hash::Hash,
-    instruction::{AccountMeta, Instruction},
-    msg,
+    instruction::{AccountMeta},
     program_option::COption,
     program_pack::Pack,
     pubkey::Pubkey,
     rent::Rent,
     system_instruction,
-    sysvar::{self},
   },
-  solana_program_test::{processor, BanksClient, ProgramTest, ProgramTestContext},
+  solana_program_test::{processor, ProgramTest, ProgramTestContext},
   solana_sdk::signature::Keypair,
   solana_sdk::{account::Account, signature::Signer, transaction::Transaction},
-  spl_token::{processor::Processor, state::AccountState},
-  std::str::FromStr,
+  
+  spl_token::{processor::Processor},
 };
+
+use std::convert::TryInto;
 
 /// Tests a simple hodl vault
 /// Based on Record functional test: https://github.com/solana-labs/solana-program-library/blob/2b3f71ead5b81f4ea4a2fd3e4fe9583a6e39b6a4/record/program/tests/functional.rs
@@ -37,12 +35,13 @@ async fn test_hodl_vault() {
     ::Vault::id(),
     processor!(::Vault::processor::Processor::process),
   );
+  
   let mut program_test_context = program_test.start_with_context().await;
   // A basic Vault has 3 relevant tokens: X (underlying asset), lX (strategy derivative), llX (vault
   // derivative). We roughly need a client-managed & vault-managed SPL token account per-token.
   // For succintnesss, we set all of these up together:
   let mint_client_vault_accounts =
-    create_tokens_and_accounts(&mut program_test_context, 3, 3).await;
+    create_tokens_and_accounts(&mut program_test_context, 4, 3).await;
 
   // Create Vault account
   let hodl_vault_storage_account = Keypair::new();
@@ -69,6 +68,7 @@ async fn test_hodl_vault() {
         COption::Some(mint_client_vault_accounts[0][2].pubkey()), // vault_lx_token account
         99,             // unused deposit inst. ID
         99,             // unused withdraw inst. ID
+        99,             // unused estimate value inst. ID
       )
       .unwrap(),
     ],
@@ -105,10 +105,11 @@ async fn test_hodl_vault() {
         &::Vault::id(),
         &spl_token::id(),
         &mint_client_vault_accounts[0][1].pubkey(), // client_x_token account
-        &mint_client_vault_accounts[1][2].pubkey(), // vault_lx_token account
+        &mint_client_vault_accounts[1][1].pubkey(), // client_lx_token account
         vec![
           AccountMeta::new_readonly(program_test_context.payer.pubkey(), true), // source authority
           AccountMeta::new_readonly(hodl_vault_storage_account.pubkey(), false),
+          AccountMeta::new_readonly(::Vault::id(), false),
           AccountMeta::new(mint_client_vault_accounts[0][2].pubkey(), false), // hodl destination.
         ],
         100,
@@ -144,6 +145,19 @@ async fn test_hodl_vault() {
     100,
   )
   .await;
+
+  // TODO(013): Test estimated_value against vaults.
+  // check_vault_value
+  //  let additional_account_metas = vec![
+  //   AccountMeta::new_readonly(vault_storage_account_key, false), 
+  //   // Outer vault accounts.
+  //   AccountMeta::new_readonly(wrapper_vault_storage_account.pubkey(), false),
+  //   AccountMeta::new_readonly(::Vault::id(), false),
+  //   // Inner vault accounts.
+  //   AccountMeta::new_readonly(hodl_vault_storage_account.pubkey(), false),
+  //   AccountMeta::new_readonly(::Vault::id(), false),
+  //   AccountMeta::new(mint_client_vault_accounts[0][2].pubkey(), false), // hodl destination.
+  // ],
   check_token_account(
     &mut program_test_context,
     &mint_client_vault_accounts[1][2].pubkey(),
@@ -158,11 +172,12 @@ async fn test_hodl_vault() {
       VaultInstruction::withdraw(
         &::Vault::id(),
         &spl_token::id(),
-        &mint_client_vault_accounts[0][2].pubkey(), // vault_x_token account
+        &mint_client_vault_accounts[1][1].pubkey(), // client_lx_token account
         &mint_client_vault_accounts[0][1].pubkey(), // client_x_token account
         vec![
           AccountMeta::new_readonly(pda, false),
           AccountMeta::new_readonly(hodl_vault_storage_account.pubkey(), false),
+          AccountMeta::new_readonly(::Vault::id(), false),
           AccountMeta::new(mint_client_vault_accounts[0][2].pubkey(), false), // hodl destination.
         ],
         100,
@@ -198,47 +213,167 @@ async fn test_hodl_vault() {
   .await;
 
   // Create wrapper vault which uses the hodl vault as a Strategy.
-  // TODO(004): Uncomment below.
-  // let wrapper_vault_storage_account = Keypair::new();
-  // let mut transaction = Transaction::new_with_payer(
-  //   &[
-  //     // Create Vault storage acccount.
-  //     system_instruction::create_account(
-  //       &program_test_context.payer.pubkey(),
-  //       &wrapper_vault_storage_account.pubkey(),
-  //       1.max(Rent::default().minimum_balance(::Vault::state::Vault::LEN)),
-  //       ::Vault::state::Vault::LEN as u64,
-  //       &::Vault::id(),
-  //     ),
-  //     // Initialize the vault & setup its storage account.
-  //     VaultInstruction::initialize_vault(
-  //       &::Vault::id(),
-  //       &program_test_context.payer.pubkey(),
-  //       &wrapper_vault_storage_account.pubkey(),
-  //       &mint_client_vault_accounts[1][2].pubkey(), // vault_lx_token account
-  //       &mint_client_vault_accounts[2][0].pubkey(), // llx mint account
-  //       &spl_token::id(),
-  //       &::Vault::id(), // Strategy program ID
-  //       false,          // hodl
-  //       COption::None,  // Unused vault_lx_token account
-  //       2,              // deposit inst. ID
-  //       3,              // withdraw inst. ID
-  //     )
-  //     .unwrap(),
-  //   ],
-  //   Some(&program_test_context.payer.pubkey()),
-  // );
-  // transaction.sign(
-  //   &[&program_test_context.payer, &wrapper_vault_storage_account],
-  //   program_test_context.last_blockhash,
-  // );
-  // assert_matches!(
-  //   program_test_context
-  //     .banks_client
-  //     .process_transaction(transaction)
-  //     .await,
-  //   Ok(())
-  // );
+  let wrapper_vault_storage_account = Keypair::new();
+  let mut transaction = Transaction::new_with_payer(
+    &[
+      // Create Vault storage acccount.
+      system_instruction::create_account(
+        &program_test_context.payer.pubkey(),
+        &wrapper_vault_storage_account.pubkey(),
+        1.max(Rent::default().minimum_balance(::Vault::state::Vault::LEN)),
+        ::Vault::state::Vault::LEN as u64,
+        &::Vault::id(),
+      ),
+      // Initialize the vault & setup its storage account.
+      VaultInstruction::initialize_vault(
+        &::Vault::id(),
+        &program_test_context.payer.pubkey(),
+        &wrapper_vault_storage_account.pubkey(),
+        &mint_client_vault_accounts[2][2].pubkey(), // vault_llx_token account
+        &mint_client_vault_accounts[3][0].pubkey(), // lllx mint account
+        &spl_token::id(),
+        &::Vault::id(), // Strategy program ID
+        false,          // hodl
+        COption::None,  // Unused vault_lx_token account
+        1,              // deposit inst. ID
+        2,              // withdraw inst. ID
+        3,              // estimate value inst. ID
+      )
+      .unwrap(),
+    ],
+    Some(&program_test_context.payer.pubkey()),
+  );
+  transaction.sign(
+    &[&program_test_context.payer, &wrapper_vault_storage_account],
+    program_test_context.last_blockhash,
+  );
+  assert_matches!(
+    program_test_context
+      .banks_client
+      .process_transaction(transaction)
+      .await,
+    Ok(())
+  );
+
+  // Transact with Wrapper vault.
+  let mut transaction = Transaction::new_with_payer(
+    &[
+      // Deposit X tokens from client account into Vault in exchange for llX tokens.
+      // Accounts: [vault_program, token_program, source_wallet, target_wallet, signers,
+      //           this_programs_accounts, child_strategy_accounts]
+      VaultInstruction::deposit(
+        &::Vault::id(),
+        &spl_token::id(),
+        &mint_client_vault_accounts[0][1].pubkey(), // client_x_token account
+        &mint_client_vault_accounts[3][1].pubkey(), // client_lllx_token account
+        // These will get passed through to the HODL vault beneath this.
+        vec![
+          // Source authority.
+          AccountMeta::new_readonly(program_test_context.payer.pubkey(), true), // source authority
+          // Outer vault accounts.
+          AccountMeta::new_readonly(wrapper_vault_storage_account.pubkey(), false),
+          AccountMeta::new_readonly(::Vault::id(), false),
+          // Inner vault accounts.
+          AccountMeta::new_readonly(hodl_vault_storage_account.pubkey(), false),
+          AccountMeta::new_readonly(::Vault::id(), false),
+          AccountMeta::new(mint_client_vault_accounts[0][2].pubkey(), false), // vault_x_token account
+        ],
+        100,
+      )
+      .unwrap(),
+    ],
+    Some(&program_test_context.payer.pubkey()),
+  );
+  transaction.sign(
+    &[&program_test_context.payer],
+    program_test_context.last_blockhash,
+  );
+  assert_matches!(
+    program_test_context
+      .banks_client
+      .process_transaction(transaction)
+      .await,
+    Ok(())
+  );
+  // Ensure accounts have correct balances.
+  // Due to Rust semantics limitations around borrowing, we don't pass an expected owner.
+  check_token_account(
+    &mut program_test_context,
+    &mint_client_vault_accounts[0][1].pubkey(),
+    &COption::None,
+    900,
+  )
+  .await;
+  check_token_account(
+    &mut program_test_context,
+    &mint_client_vault_accounts[0][2].pubkey(),
+    &COption::Some(pda),
+    100,
+  )
+  .await;
+  
+  check_token_account(
+    &mut program_test_context,
+    &mint_client_vault_accounts[1][2].pubkey(),
+    &COption::Some(pda),
+    0,
+  )
+  .await;
+
+
+  
+  let mut transaction = Transaction::new_with_payer(
+    &[
+      // Withdraw X tokens from vault into client account in exchange for llX tokens.
+      // Accounts: [vault_program, token_program, source_wallet, target_wallet, signers,
+      //           this_programs_accounts, child_strategy_accounts]
+      VaultInstruction::withdraw(
+        &::Vault::id(),
+        &spl_token::id(),
+        &mint_client_vault_accounts[3][1].pubkey(), // client_lllx_token account
+        &mint_client_vault_accounts[0][1].pubkey(), // client_x_token account
+        vec![
+          // Source authority
+          AccountMeta::new_readonly(pda, false), 
+          // Outer vault accounts.
+          AccountMeta::new_readonly(wrapper_vault_storage_account.pubkey(), false),
+          AccountMeta::new_readonly(::Vault::id(), false),
+          // Inner vault accounts.
+          AccountMeta::new_readonly(hodl_vault_storage_account.pubkey(), false),
+          AccountMeta::new_readonly(::Vault::id(), false),
+          AccountMeta::new(mint_client_vault_accounts[0][2].pubkey(), false), // hodl destination.
+        ],
+        100,
+      )
+      .unwrap(),
+    ],
+    Some(&program_test_context.payer.pubkey()),
+  );
+  transaction.sign(
+    &[&program_test_context.payer],
+    program_test_context.last_blockhash,
+  );
+  assert_matches!(
+    program_test_context
+      .banks_client
+      .process_transaction(transaction)
+      .await,
+    Ok(())
+  );
+  check_token_account(
+    &mut program_test_context,
+    &mint_client_vault_accounts[0][1].pubkey(),
+    &COption::None,
+    1000,
+  )
+  .await;
+  check_token_account(
+    &mut program_test_context,
+    &mint_client_vault_accounts[0][2].pubkey(),
+    &COption::Some(pda),
+    0,
+  )
+  .await;
 }
 
 /// Checks for expected values on a token account.
@@ -260,6 +395,55 @@ async fn check_token_account(
     assert_eq!(internal_account.owner, expected_owner.unwrap());
   }
   assert_eq!(internal_account.amount, expected_amount);
+}
+
+
+/// Checks for expected values on a token account.
+async fn check_vault_value(
+  program_test_context: &mut ProgramTestContext,
+  vault_storage_account_key: &Pubkey,
+  additional_account_metas: Vec<AccountMeta>,
+  expected_amount: u64,
+) {
+  let temp_memory_account = Keypair::new();
+  let mut transaction = Transaction::new_with_payer(
+    &[
+      // Create Vault storage acccount.
+      system_instruction::create_account(
+        &program_test_context.payer.pubkey(),
+        &temp_memory_account.pubkey(),
+        0,  // No rent.
+        8, // sizeof(u64)
+        &::Vault::id(),
+      ),
+      // Withdraw X tokens from vault into client account in exchange for llX tokens.
+      // Accounts: [vault_program, token_program, source_wallet, target_wallet, signers,
+      //           this_programs_accounts, child_strategy_accounts]
+      VaultInstruction::estimate_value(
+        &::Vault::id(),
+        &::Vault::id(),
+        &temp_memory_account.pubkey(),
+        additional_account_metas,
+      )
+      .unwrap(),
+    ],
+    Some(&program_test_context.payer.pubkey()),
+  );
+  transaction.sign(
+    &[&program_test_context.payer],
+    program_test_context.last_blockhash,
+  );
+
+  let temp_memory_account = program_test_context
+    .banks_client
+    .get_account(temp_memory_account.pubkey())
+    .await
+    .unwrap()
+    .expect("Account unretrievable");
+  assert_eq!(u64::from_le_bytes(*s2a(&temp_memory_account.data[..8])), expected_amount);
+}
+fn s2a(slice: &[u8]) -> &[u8; 8] {
+  slice.try_into().expect("slice with incorrect length")
 }
 
 /// Generates tokens & token-accounts to hold them in the specified numbers.

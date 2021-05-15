@@ -17,8 +17,7 @@ This makes it trivial, for example, to create arbitrary wrapper-tokens (like stE
 ## TODO
 TODO(XXX) corresponds to a TODO location in-code.
 
-* TODO(003): Implement strategy withdraw/deposit
-* TODO(004): Add functional test for Vault using another Vault as a Strategy.
+* Expand design documentation - segmentation of signatures across strategies, token movement.
 * Add Peek function to strategy to see underlying value.
 * TODO(001): Grant prportional lX tokens when depositing
 * TODO(002): Charge lX tokens when withdrawing
@@ -35,6 +34,11 @@ TODO(XXX) corresponds to a TODO location in-code.
 * Cleanup / merge the various Deposits & Withdraw logic
 * TODO(006): Maybe refactor initialize_vault API
 * TODO(010): Refactor StrategyInstruction to reduce duplicate logic with Vault.
+* TODO(011): Remove dev logs and/or gate them appropriately.
+* TODO(012): Calculate last_estimated_value dynamically & return with Shared Memory program or a
+             similar service. Shared Memory hasn't yet been launched.
+* TODO(Security): Fix vulnerabilities.
+* TODO(013): Add account metas.
 
 ### Environment Setup
 1. Install Rust from https://rustup.rs/
