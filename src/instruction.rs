@@ -55,10 +55,13 @@ pub enum VaultInstruction {
         // https://github.com/yearn/yearn-vaults/blob/master/contracts/BaseStrategy.sol#L781
         strategy_program_deposit_instruction_id: u8,
         strategy_program_withdraw_instruction_id: u8,
+        strategy_program_estimate_instruction_id: u8,
         hodl: bool,
     },
 
     /// Deposits a given token into the vault.
+    ///
+    /// Note this API is an implementation of the StrategyInstruction#Deposit instruction.
     ///
     /// Accounts expected:
     /// 1. `[]` SPL Token program
@@ -68,10 +71,13 @@ pub enum VaultInstruction {
     /// 5. `[]` The Vault storage account.
     /// 6. `[]` The strategy program.
     /// 7. `[]` (Optional) X SPL account owned by Vault if hodling.
+    /// 8+. `[]` Strategy extra accoounts (see StrategyInstruction#Deposit)
     /// TODO(009):: Signer pubkeys for multisignature wallets - need signer_num param.
     Deposit { amount: u64 },
 
     /// Withdraws a token from the vault.
+    ///
+    /// Note this API is an implementation of the StrategyInstruction#Withdraw instruction.
     ///
     /// Accounts expected:
     /// 1. `[]` SPL Token program
@@ -81,9 +87,30 @@ pub enum VaultInstruction {
     /// 5. `[]` The Vault storage account.
     /// 6. `[]` The strategy program.
     /// 7. `[]` (Optional) X SPL account owned by Vault if hodling.
+    /// 8+. `[]` Strategy extra accoounts (see StrategyInstruction#Withdraw)
     /// TODO(009):: Signer pubkeys for multisignature wallets - need signer_num param.
     Withdraw {
         amount: u64, // # of derivative tokens.
+    },
+
+    /// Estimates the underlying value of the vault in its native asset.
+    ///
+    /// This instruction stores its results in a temporary account using the Shared Memory program.
+    /// https://spl.solana.com/shared-memory
+    ///
+    /// Accounts expected:
+    /// 1. `[]` Shared Memory program
+    /// 1. `[]` Shared memory output
+    /// 2. `[]` The Vault storage account.
+    /// 3. `[]` (Optional) X SPL account owned by Vault if hodling.
+    /// 4+ `[*]` Strategy extra accounts - any additional accounts required by strategy
+    EstimateValue {},
+
+    /// A helper utility which functions similarly to the (unlaunched) Shared Memory program.
+    ///
+    /// Data is read directly from the account memory.
+    WriteData {
+        // data: &'a [u8]
     },
 }
 
@@ -97,7 +124,7 @@ pub enum StrategyInstruction {
     /// 2. `[signer]` The source wallet containing X tokens.
     /// 3. `[]` The target wallet for llX tokens.
     /// 4+ `[]` Source signers
-    /// 5+. `[*]` Any additional accounts required by strategy
+    /// 5+. `[*]` Strategy extra accounts - any additional accounts required by strategy
     /// TODO(009):: Signer pubkeys for multisignature wallets - need signer_num param.
     Deposit { amount: u64 },
 
@@ -108,11 +135,22 @@ pub enum StrategyInstruction {
     /// 2. `[signer]` Source Wallet for derivative token (lX).
     /// 3. `[]` Target token (X) wallet target.
     /// 4+ `[]` Source signers
-    /// 5+ `[*]` Any additional accounts required by strategy
+    /// 5+. `[*]` Strategy extra accounts - any additional accounts required by strategy
     /// TODO(009):: Signer pubkeys for multisignature wallets - need signer_num param.
     Withdraw {
         amount: u64, // # of derivative tokens.
     },
+
+    /// Estimates the underlying value of the vault in its native asset.
+    ///
+    /// This instruction stores its results in a temporary account using the Shared Memory program.
+    /// https://spl.solana.com/shared-memory
+    ///
+    /// Accounts expected:
+    /// 1. `[]` Vault program
+    /// 1. `[]` Shared memory output
+    /// 3+. `[*]` Strategy extra accounts - any additional accounts required by strategy
+    EstimateValue {},
 }
 
 impl StrategyInstruction {
@@ -120,11 +158,15 @@ impl StrategyInstruction {
     pub fn unpack(input: &[u8], is_deposit: bool) -> Result<Self, ProgramError> {
         let (_tag, rest) = input.split_first().ok_or(InvalidInstruction)?;
         let amount = rest
-        .get(..8)
-        .and_then(|slice| slice.try_into().ok())
-        .map(u64::from_le_bytes)
-        .ok_or(InvalidInstruction)?;
-        Ok(if is_deposit {Self::Deposit{amount}} else {Self::Withdraw{amount}})
+            .get(..8)
+            .and_then(|slice| slice.try_into().ok())
+            .map(u64::from_le_bytes)
+            .ok_or(InvalidInstruction)?;
+        Ok(if is_deposit {
+            Self::Deposit { amount }
+        } else {
+            Self::Withdraw { amount }
+        })
     }
 
     fn pack(&self, instruction_id: u8) -> Vec<u8> {
@@ -137,6 +179,7 @@ impl StrategyInstruction {
             &Self::Withdraw { amount } => {
                 buf.extend_from_slice(&amount.to_le_bytes());
             }
+            &Self::EstimateValue {} => {}
         }
         buf
     }
@@ -178,6 +221,22 @@ impl StrategyInstruction {
             additional_account_metas,
         );
     }
+
+    pub fn estimate_value(
+        instruction_id: u8,
+        program_id: &Pubkey,
+        vault_program_id: &Pubkey,
+        shared_memory_account: &Pubkey,
+        additional_account_metas: Vec<AccountMeta>,
+    ) -> Result<Instruction, ProgramError> {
+        create_estimate_value(
+            Self::EstimateValue {}.pack(instruction_id),
+            program_id,
+            vault_program_id,
+            shared_memory_account,
+            additional_account_metas,
+        )
+    }
 }
 
 impl VaultInstruction {
@@ -190,10 +249,12 @@ impl VaultInstruction {
                 let hodl = *rest.get(0).unwrap();
                 let strategy_program_deposit_instruction_id = *rest.get(1).unwrap();
                 let strategy_program_withdraw_instruction_id = *rest.get(2).unwrap();
+                let strategy_program_estimate_instruction_id = *rest.get(3).unwrap();
                 Self::InitializeVault {
                     hodl: if hodl == 1 { true } else { false },
                     strategy_program_deposit_instruction_id,
                     strategy_program_withdraw_instruction_id,
+                    strategy_program_estimate_instruction_id,
                 }
             }
             1 | 2 => {
@@ -208,6 +269,11 @@ impl VaultInstruction {
                     _ => return Err(VaultError::InvalidInstruction.into()),
                 }
             }
+            3 => Self::EstimateValue {},
+            4 => {
+                // Data unpacked separately.
+                Self::WriteData {}
+            }
             _ => return Err(VaultError::InvalidInstruction.into()),
         })
     }
@@ -219,11 +285,13 @@ impl VaultInstruction {
                 hodl,
                 strategy_program_deposit_instruction_id,
                 strategy_program_withdraw_instruction_id,
+                strategy_program_estimate_instruction_id,
             } => {
                 buf.push(0);
                 buf.push(hodl as u8);
                 buf.push(strategy_program_deposit_instruction_id);
                 buf.push(strategy_program_withdraw_instruction_id);
+                buf.push(strategy_program_estimate_instruction_id);
             }
             &Self::Deposit { amount } => {
                 buf.push(1);
@@ -234,8 +302,30 @@ impl VaultInstruction {
                 buf.push(2);
                 buf.extend_from_slice(&amount.to_le_bytes());
             }
+            &Self::EstimateValue {} => {
+                buf.push(3);
+            }
+            // Data packed separately.
+            &Self::WriteData {} => {
+                buf.push(4);
+            }
         }
         buf
+    }
+
+    pub fn write_data(
+        vault_program_id: &Pubkey,
+        shared_memory_account: &Pubkey,
+        data: &[u8],
+    ) -> Result<Instruction, ProgramError> {
+        let accounts = vec![AccountMeta::new(*shared_memory_account, false)];
+        let mut instruction_data = Self::WriteData {}.pack();
+        instruction_data.extend(data);
+        Ok(Instruction {
+            program_id: *vault_program_id,
+            accounts,
+            data: instruction_data,
+        })
     }
 
     pub fn initialize_vault(
@@ -250,6 +340,7 @@ impl VaultInstruction {
         x_token_account: COption<Pubkey>,
         strategy_program_deposit_instruction_id: u8,
         strategy_program_withdraw_instruction_id: u8,
+        strategy_program_estimate_instruction_id: u8,
     ) -> Result<Instruction, ProgramError> {
         let mut accounts = vec![
             AccountMeta::new_readonly(*initializer, true),
@@ -268,6 +359,7 @@ impl VaultInstruction {
             hodl,
             strategy_program_deposit_instruction_id,
             strategy_program_withdraw_instruction_id,
+            strategy_program_estimate_instruction_id,
         }
         .pack();
         Ok(Instruction {
@@ -312,11 +404,46 @@ impl VaultInstruction {
             additional_account_metas,
         );
     }
+
+    pub fn estimate_value(
+        program_id: &Pubkey,
+        vault_program_id: &Pubkey,
+        shared_memory_account: &Pubkey,
+        additional_account_metas: Vec<AccountMeta>,
+    ) -> Result<Instruction, ProgramError> {
+        create_estimate_value(
+            Self::EstimateValue {}.pack(),
+            program_id,
+            vault_program_id,
+            shared_memory_account,
+            additional_account_metas,
+        )
+    }
+}
+
+pub fn create_estimate_value(
+    data: Vec<u8>,
+    program_id: &Pubkey,
+    vault_program_id: &Pubkey,
+    shared_memory_account: &Pubkey,
+    additional_account_metas: Vec<AccountMeta>,
+) -> Result<Instruction, ProgramError> {
+    let mut accounts = vec![
+        AccountMeta::new_readonly(*vault_program_id, false),
+        AccountMeta::new(*shared_memory_account, false),
+    ];
+    accounts.extend(additional_account_metas);
+
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
 }
 
 pub fn create_transfer(
     data: Vec<u8>,
-    vault_program_id: &Pubkey,
+    program_id: &Pubkey,
     token_program_id: &Pubkey,
     source_pubkey: &Pubkey,
     target_pubkey: &Pubkey,
@@ -330,7 +457,7 @@ pub fn create_transfer(
     accounts.extend(additional_account_metas);
 
     Ok(Instruction {
-        program_id: *vault_program_id,
+        program_id: *program_id,
         accounts,
         data,
     })

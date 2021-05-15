@@ -1,7 +1,7 @@
 use solana_program::{
   account_info::{next_account_info, AccountInfo},
   entrypoint::ProgramResult,
-  instruction::AccountMeta,
+  instruction::{AccountMeta, Instruction},
   msg,
   program::{invoke, invoke_signed},
   program_error::ProgramError,
@@ -37,6 +37,7 @@ impl Processor {
         hodl,
         strategy_program_deposit_instruction_id,
         strategy_program_withdraw_instruction_id,
+        strategy_program_estimate_instruction_id,
       } => {
         msg!("Instruction: InitializeVault");
         Self::process_initialize_vault(
@@ -45,6 +46,7 @@ impl Processor {
           hodl,
           strategy_program_deposit_instruction_id,
           strategy_program_withdraw_instruction_id,
+          strategy_program_estimate_instruction_id,
         )
       }
       VaultInstruction::Deposit { amount } => {
@@ -55,7 +57,36 @@ impl Processor {
         msg!("Instruction: Withdraw");
         Self::process_transfer(program_id, accounts, amount, false)
       }
+      VaultInstruction::EstimateValue {} => {
+        msg!("Instruction: EstimateValue");
+        Self::process_estimate_value(program_id, accounts)
+      }
+      VaultInstruction::WriteData {} => {
+        msg!("Instruction: WriteData");
+        let (_, data) = instruction_data
+          .split_first()
+          .ok_or(VaultError::InvalidInstruction)?;
+        Self::process_write_data(accounts, data)
+      }
     }
+  }
+
+  fn process_write_data(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    // TODO(Security): Ensure we don't screw with the other storage accounts. This should probably
+    // be moved to a separate program, like the Shared Memory program...
+    let storage_account = next_account_info(account_info_iter)?;
+    if storage_account.lamports() > 0 {
+      msg!("Data should only be written to temporary accounts");
+      return Err(VaultError::InvalidInstruction.into());
+    }
+    if storage_account.data_len() < data.len() {
+      msg!("Need more space in storage account");
+      return Err(ProgramError::InvalidArgument);
+    }
+    // Write data into the temporary account storage.
+    storage_account.data.borrow_mut().clone_from_slice(data);
+    Ok(())
   }
 
   fn process_initialize_vault(
@@ -64,6 +95,7 @@ impl Processor {
     hodl: bool,
     strategy_program_deposit_instruction_id: u8,
     strategy_program_withdraw_instruction_id: u8,
+    strategy_program_estimate_instruction_id: u8,
   ) -> ProgramResult {
     msg!("Initializing vault");
     let account_info_iter = &mut accounts.iter();
@@ -124,6 +156,9 @@ impl Processor {
     storage_info.strategy_program_deposit_instruction_id = strategy_program_deposit_instruction_id;
     storage_info.strategy_program_withdraw_instruction_id =
       strategy_program_withdraw_instruction_id;
+    storage_info.strategy_program_estimate_instruction_id =
+      strategy_program_estimate_instruction_id;
+    storage_info.last_estimated_value = 0;
 
     // Write the info to the actual account.
     Vault::pack(storage_info, &mut storage_account.data.borrow_mut())?;
@@ -265,18 +300,23 @@ impl Processor {
     } else {
       // Pass through the source authority above the extra signers.
       let mut account_metas = vec![AccountMeta::new_readonly(*source_authority.key, true)];
-      account_metas.extend(account_info_iter
-        .map(|account| {
-          if account.is_writable {
-            AccountMeta::new(*account.key, account.is_signer)
-          } else {
-            AccountMeta::new_readonly(*account.key, account.is_signer)
-          }
-        })
-        .collect::<Vec<AccountMeta>>());
+      account_metas.extend(
+        account_info_iter
+          .map(|account| {
+            if account.is_writable {
+              AccountMeta::new(*account.key, account.is_signer)
+            } else {
+              AccountMeta::new_readonly(*account.key, account.is_signer)
+            }
+          })
+          .collect::<Vec<AccountMeta>>(),
+      );
 
       if is_deposit {
-        msg!("Depositing into strategy {}", storage_info.strategy_program_deposit_instruction_id);
+        msg!(
+          "Depositing into strategy {}",
+          storage_info.strategy_program_deposit_instruction_id
+        );
         let instruction = StrategyInstruction::deposit(
           storage_info.strategy_program_deposit_instruction_id,
           program_id,
@@ -287,13 +327,12 @@ impl Processor {
           account_metas,
           amount,
         )?;
-        invoke(
-          &instruction,
-          &accounts,
-        )?;
-        
+        invoke(&instruction, &accounts)?;
       } else {
-        msg!("Withdrawing from strategy {}", storage_info.strategy_program_withdraw_instruction_id);
+        msg!(
+          "Withdrawing from strategy {}",
+          storage_info.strategy_program_withdraw_instruction_id
+        );
         let instruction = StrategyInstruction::withdraw(
           storage_info.strategy_program_withdraw_instruction_id,
           program_id,
@@ -304,12 +343,59 @@ impl Processor {
           account_metas,
           amount,
         )?;
-        invoke_signed(
-          &instruction,
-          &accounts,
-          &[&[&b"vault"[..], &[bump_seed]]],
-        )?;
+        invoke_signed(&instruction, &accounts, &[&[&b"vault"[..], &[bump_seed]]])?;
       }
+    }
+    Ok(())
+  }
+
+  fn process_estimate_value(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let _ = next_account_info(account_info_iter)?; // program
+    let temp_memory_account = next_account_info(account_info_iter)?;
+    let storage_account = next_account_info(account_info_iter)?;
+
+    msg!("Unpacking storage");
+    let storage_info = Vault::unpack_unchecked(&storage_account.data.borrow())?;
+    if !storage_info.is_initialized() {
+      msg!("Storage not configured!");
+      return Err(VaultError::InvalidInstruction.into());
+    }
+
+    if storage_info.hodl {
+      // Derive the value directly from the storage account.
+      let x_token_account = next_account_info(account_info_iter)?;
+      let internal_account =
+        spl_token::state::Account::unpack_unchecked(&x_token_account.data.borrow()).unwrap();
+      let instruction = VaultInstruction::write_data(
+        program_id,
+        temp_memory_account.key,
+        &internal_account.amount.to_le_bytes(),
+      )?;
+      invoke(&instruction, &accounts)?;
+    } else {
+      let strategy_program = next_account_info(account_info_iter)?;
+      if *strategy_program.key != storage_info.strategy_program_id {
+        msg!("Invalid strategy program provided!");
+        return Err(VaultError::InvalidInstruction.into());
+      }
+      let account_metas = account_info_iter
+        .map(|account| {
+          if account.is_writable {
+            AccountMeta::new(*account.key, account.is_signer)
+          } else {
+            AccountMeta::new_readonly(*account.key, account.is_signer)
+          }
+        })
+        .collect::<Vec<AccountMeta>>();
+      let instruction = StrategyInstruction::estimate_value(
+        storage_info.strategy_program_estimate_instruction_id,
+        strategy_program.key,
+        program_id,
+        temp_memory_account.key,
+        account_metas,
+      )?;
+      invoke(&instruction, &accounts)?;
     }
     Ok(())
   }

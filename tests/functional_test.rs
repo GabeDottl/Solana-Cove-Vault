@@ -1,7 +1,7 @@
 #![cfg(feature = "test-bpf")]
 
 use {
-  ::Vault::{instruction::VaultInstruction},
+  ::Vault::{state, instruction::VaultInstruction},
   assert_matches::*,
   solana_program::{
     instruction::{AccountMeta},
@@ -14,8 +14,11 @@ use {
   solana_program_test::{processor, ProgramTest, ProgramTestContext},
   solana_sdk::signature::Keypair,
   solana_sdk::{account::Account, signature::Signer, transaction::Transaction},
+  
   spl_token::{processor::Processor},
 };
+
+use std::convert::TryInto;
 
 /// Tests a simple hodl vault
 /// Based on Record functional test: https://github.com/solana-labs/solana-program-library/blob/2b3f71ead5b81f4ea4a2fd3e4fe9583a6e39b6a4/record/program/tests/functional.rs
@@ -32,6 +35,7 @@ async fn test_hodl_vault() {
     ::Vault::id(),
     processor!(::Vault::processor::Processor::process),
   );
+  
   let mut program_test_context = program_test.start_with_context().await;
   // A basic Vault has 3 relevant tokens: X (underlying asset), lX (strategy derivative), llX (vault
   // derivative). We roughly need a client-managed & vault-managed SPL token account per-token.
@@ -64,6 +68,7 @@ async fn test_hodl_vault() {
         COption::Some(mint_client_vault_accounts[0][2].pubkey()), // vault_lx_token account
         99,             // unused deposit inst. ID
         99,             // unused withdraw inst. ID
+        99,             // unused estimate value inst. ID
       )
       .unwrap(),
     ],
@@ -140,6 +145,19 @@ async fn test_hodl_vault() {
     100,
   )
   .await;
+
+  // TODO(013): Test estimated_value against vaults.
+  // check_vault_value
+  //  let additional_account_metas = vec![
+  //   AccountMeta::new_readonly(vault_storage_account_key, false), 
+  //   // Outer vault accounts.
+  //   AccountMeta::new_readonly(wrapper_vault_storage_account.pubkey(), false),
+  //   AccountMeta::new_readonly(::Vault::id(), false),
+  //   // Inner vault accounts.
+  //   AccountMeta::new_readonly(hodl_vault_storage_account.pubkey(), false),
+  //   AccountMeta::new_readonly(::Vault::id(), false),
+  //   AccountMeta::new(mint_client_vault_accounts[0][2].pubkey(), false), // hodl destination.
+  // ],
   check_token_account(
     &mut program_test_context,
     &mint_client_vault_accounts[1][2].pubkey(),
@@ -219,6 +237,7 @@ async fn test_hodl_vault() {
         COption::None,  // Unused vault_lx_token account
         1,              // deposit inst. ID
         2,              // withdraw inst. ID
+        3,              // estimate value inst. ID
       )
       .unwrap(),
     ],
@@ -292,6 +311,7 @@ async fn test_hodl_vault() {
     100,
   )
   .await;
+  
   check_token_account(
     &mut program_test_context,
     &mint_client_vault_accounts[1][2].pubkey(),
@@ -375,6 +395,55 @@ async fn check_token_account(
     assert_eq!(internal_account.owner, expected_owner.unwrap());
   }
   assert_eq!(internal_account.amount, expected_amount);
+}
+
+
+/// Checks for expected values on a token account.
+async fn check_vault_value(
+  program_test_context: &mut ProgramTestContext,
+  vault_storage_account_key: &Pubkey,
+  additional_account_metas: Vec<AccountMeta>,
+  expected_amount: u64,
+) {
+  let temp_memory_account = Keypair::new();
+  let mut transaction = Transaction::new_with_payer(
+    &[
+      // Create Vault storage acccount.
+      system_instruction::create_account(
+        &program_test_context.payer.pubkey(),
+        &temp_memory_account.pubkey(),
+        0,  // No rent.
+        8, // sizeof(u64)
+        &::Vault::id(),
+      ),
+      // Withdraw X tokens from vault into client account in exchange for llX tokens.
+      // Accounts: [vault_program, token_program, source_wallet, target_wallet, signers,
+      //           this_programs_accounts, child_strategy_accounts]
+      VaultInstruction::estimate_value(
+        &::Vault::id(),
+        &::Vault::id(),
+        &temp_memory_account.pubkey(),
+        additional_account_metas,
+      )
+      .unwrap(),
+    ],
+    Some(&program_test_context.payer.pubkey()),
+  );
+  transaction.sign(
+    &[&program_test_context.payer],
+    program_test_context.last_blockhash,
+  );
+
+  let temp_memory_account = program_test_context
+    .banks_client
+    .get_account(temp_memory_account.pubkey())
+    .await
+    .unwrap()
+    .expect("Account unretrievable");
+  assert_eq!(u64::from_le_bytes(*s2a(&temp_memory_account.data[..8])), expected_amount);
+}
+fn s2a(slice: &[u8]) -> &[u8; 8] {
+  slice.try_into().expect("slice with incorrect length")
 }
 
 /// Generates tokens & token-accounts to hold them in the specified numbers.

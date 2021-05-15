@@ -35,6 +35,10 @@ TODO(XXX) corresponds to a TODO location in-code.
 * TODO(006): Maybe refactor initialize_vault API
 * TODO(010): Refactor StrategyInstruction to reduce duplicate logic with Vault.
 * TODO(011): Remove dev logs and/or gate them appropriately.
+* TODO(012): Calculate last_estimated_value dynamically & return with Shared Memory program or a
+             similar service. Shared Memory hasn't yet been launched.
+* TODO(Security): Fix vulnerabilities.
+* TODO(013): Add account metas.
 
 ### Environment Setup
 1. Install Rust from https://rustup.rs/
