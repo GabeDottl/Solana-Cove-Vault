@@ -411,7 +411,7 @@ impl VaultInstruction {
         shared_memory_account: &Pubkey,
         additional_account_metas: Vec<AccountMeta>,
     ) -> Result<Instruction, ProgramError> {
-        create_estimate_value(
+        return create_estimate_value(
             Self::EstimateValue {}.pack(),
             program_id,
             vault_program_id,

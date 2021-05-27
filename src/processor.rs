@@ -1,7 +1,7 @@
 use solana_program::{
   account_info::{next_account_info, AccountInfo},
   entrypoint::ProgramResult,
-  instruction::{AccountMeta},
+  instruction::AccountMeta,
   msg,
   program::{invoke, invoke_signed},
   program_error::ProgramError,
@@ -78,7 +78,7 @@ impl Processor {
     let storage_account = next_account_info(account_info_iter)?;
     if storage_account.lamports() > 0 {
       msg!("Data should only be written to temporary accounts");
-      return Err(VaultError::InvalidInstruction.into());
+      // return Err(VaultError::InvalidInstruction.into()); TODO
     }
     if storage_account.data_len() < data.len() {
       msg!("Need more space in storage account");
@@ -152,6 +152,7 @@ impl Processor {
         ],
       )?;
     }
+    println!("strategy_program.key: {}", strategy_program.key);
     storage_info.strategy_program_id = *strategy_program.key;
     storage_info.strategy_program_deposit_instruction_id = strategy_program_deposit_instruction_id;
     storage_info.strategy_program_withdraw_instruction_id =
@@ -246,10 +247,10 @@ impl Processor {
     // Charge fees
     if is_deposit {
       // TODO(001): implement.
-      msg!("Mint lX tokens to client account");
+      msg!("Mint llX tokens to client account");
     } else {
       // TODO(002): implement.
-      msg!("Transfer & burn lX tokens from client");
+      msg!("Transfer & burn llX tokens from client");
     }
 
     let (pda, bump_seed) = Pubkey::find_program_address(&[b"vault"], program_id);
@@ -350,13 +351,17 @@ impl Processor {
   }
 
   fn process_estimate_value(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
+    msg!(
+      "Estimate Value!--------------------------------------------------------------------------"
+    );
     let account_info_iter = &mut accounts.iter();
     let _ = next_account_info(account_info_iter)?; // program
     let temp_memory_account = next_account_info(account_info_iter)?;
     let storage_account = next_account_info(account_info_iter)?;
 
-    msg!("Unpacking storage");
+    msg!("Unpacking storage {}", storage_account.key);
     let storage_info = Vault::unpack_unchecked(&storage_account.data.borrow())?;
+    msg!("Unpacked storage");
     if !storage_info.is_initialized() {
       msg!("Storage not configured!");
       return Err(VaultError::InvalidInstruction.into());
@@ -367,6 +372,10 @@ impl Processor {
       let x_token_account = next_account_info(account_info_iter)?;
       let internal_account =
         spl_token::state::Account::unpack_unchecked(&x_token_account.data.borrow()).unwrap();
+      msg!(
+        "Estimating value from HODL vault: {}",
+        internal_account.amount
+      );
       let instruction = VaultInstruction::write_data(
         program_id,
         temp_memory_account.key,
@@ -374,9 +383,14 @@ impl Processor {
       )?;
       invoke(&instruction, &accounts)?;
     } else {
+      // Estimating value from a strategy.
       let strategy_program = next_account_info(account_info_iter)?;
       if *strategy_program.key != storage_info.strategy_program_id {
-        msg!("Invalid strategy program provided!");
+        msg!(
+          "Invalid strategy program provided! Got: {} expected {}",
+          strategy_program.key,
+          storage_info.strategy_program_id
+        );
         return Err(VaultError::InvalidInstruction.into());
       }
       let account_metas = account_info_iter
@@ -388,6 +402,10 @@ impl Processor {
           }
         })
         .collect::<Vec<AccountMeta>>();
+      msg!(
+        "Estimating value on strategy program! {}",
+        storage_info.strategy_program_estimate_instruction_id
+      );
       let instruction = StrategyInstruction::estimate_value(
         storage_info.strategy_program_estimate_instruction_id,
         strategy_program.key,

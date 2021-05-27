@@ -146,18 +146,11 @@ async fn test_hodl_vault() {
   )
   .await;
 
-  // TODO(013): Test estimated_value against vaults.
-  // check_vault_value
-  //  let additional_account_metas = vec![
-  //   AccountMeta::new_readonly(vault_storage_account_key, false), 
-  //   // Outer vault accounts.
-  //   AccountMeta::new_readonly(wrapper_vault_storage_account.pubkey(), false),
-  //   AccountMeta::new_readonly(::Vault::id(), false),
-  //   // Inner vault accounts.
-  //   AccountMeta::new_readonly(hodl_vault_storage_account.pubkey(), false),
-  //   AccountMeta::new_readonly(::Vault::id(), false),
-  //   AccountMeta::new(mint_client_vault_accounts[0][2].pubkey(), false), // hodl destination.
-  // ],
+  let additional_account_metas = vec![
+    AccountMeta::new_readonly(hodl_vault_storage_account.pubkey(), false), 
+    AccountMeta::new_readonly(mint_client_vault_accounts[0][2].pubkey(), false)
+  ];
+  check_vault_value(&mut program_test_context, additional_account_metas, 100).await;
   check_token_account(
     &mut program_test_context,
     &mint_client_vault_accounts[1][2].pubkey(),
@@ -311,6 +304,16 @@ async fn test_hodl_vault() {
     100,
   )
   .await;
+
+  println!("wrapper_vault_storage_account: {}", wrapper_vault_storage_account.pubkey());
+  let additional_account_metas = vec![
+    AccountMeta::new_readonly(wrapper_vault_storage_account.pubkey(), false), 
+    // Inner vault
+    AccountMeta::new_readonly(::Vault::id(), false),
+    AccountMeta::new_readonly(hodl_vault_storage_account.pubkey(), false), 
+    AccountMeta::new_readonly(mint_client_vault_accounts[0][2].pubkey(), false)
+  ];
+  check_vault_value(&mut program_test_context, additional_account_metas, 100).await;
   
   check_token_account(
     &mut program_test_context,
@@ -401,7 +404,6 @@ async fn check_token_account(
 /// Checks for expected values on a token account.
 async fn check_vault_value(
   program_test_context: &mut ProgramTestContext,
-  vault_storage_account_key: &Pubkey,
   additional_account_metas: Vec<AccountMeta>,
   expected_amount: u64,
 ) {
@@ -412,11 +414,10 @@ async fn check_vault_value(
       system_instruction::create_account(
         &program_test_context.payer.pubkey(),
         &temp_memory_account.pubkey(),
-        0,  // No rent.
+        5,  // Need some rent in order to stay in memory past this transaction.
         8, // sizeof(u64)
         &::Vault::id(),
       ),
-      // Withdraw X tokens from vault into client account in exchange for llX tokens.
       // Accounts: [vault_program, token_program, source_wallet, target_wallet, signers,
       //           this_programs_accounts, child_strategy_accounts]
       VaultInstruction::estimate_value(
@@ -430,8 +431,16 @@ async fn check_vault_value(
     Some(&program_test_context.payer.pubkey()),
   );
   transaction.sign(
-    &[&program_test_context.payer],
+    &[&program_test_context.payer, &temp_memory_account],
     program_test_context.last_blockhash,
+  );
+
+  assert_matches!(
+    program_test_context
+      .banks_client
+      .process_transaction(transaction)
+      .await,
+    Ok(())
   );
 
   let temp_memory_account = program_test_context
@@ -498,7 +507,10 @@ async fn create_tokens_and_accounts(
       Ok(())
     );
 
+    println!("mint: {}", mint.pubkey());
+
     for token_account in accounts[1..].iter() {
+      println!("token_account: {}", token_account.pubkey());
       let mut instructions = Vec::with_capacity(2);
       instructions.push(system_instruction::create_account(
         &program_test_context.payer.pubkey(),
