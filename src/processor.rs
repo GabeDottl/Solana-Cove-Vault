@@ -11,9 +11,10 @@ use solana_program::{
   sysvar::{rent::Rent, Sysvar},
 };
 
+use strategy_api::strategy_instruction::StrategyInstruction;
 use crate::{
   error::VaultError,
-  instruction::{StrategyInstruction, VaultInstruction},
+  instruction::{VaultInstruction},
   state::Vault,
 };
 

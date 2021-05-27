@@ -39,6 +39,7 @@ TODO(XXX) corresponds to a TODO location in-code.
              similar service. Shared Memory hasn't yet been launched.
 * TODO(Security): Fix vulnerabilities.
 * TODO(013): Add account metas.
+* TODO: Split strategy_api into its own separate, public crate & repo.
 
 ### Environment Setup
 1. Install Rust from https://rustup.rs/

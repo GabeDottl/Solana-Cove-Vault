@@ -1,6 +1,6 @@
 /*-dump.txt
 /*.so
-/target/
+**/target/
 Cargo.lock
 .vscode
 .history
