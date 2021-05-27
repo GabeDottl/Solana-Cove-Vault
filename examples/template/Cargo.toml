@@ -1,9 +1,8 @@
 [package]
-name = "Vault"
+name = "template"
 version = "0.1.0"
+authors = ["Gilgamesh <gilgameshcoder@gmail.com>"]
 edition = "2018"
-license = "WTFPL"
-publish = false
 
 [dependencies]
 solana-program = "1.6.2"
@@ -11,7 +10,7 @@ thiserror = "1.0.21"
 spl-token = {version = "3.0.1", features = ["no-entrypoint"]}
 arrayref = "0.3.6"
 num_enum = "0.5.1"
-strategy_api = { path = "strategy_api" }
+strategy_api = { path = "../../strategy_api" }
 
 [features]
 test-bpf = []
