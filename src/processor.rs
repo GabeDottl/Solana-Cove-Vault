@@ -100,20 +100,20 @@ impl Processor {
   ) -> ProgramResult {
     msg!("Initializing vault");
     let account_info_iter = &mut accounts.iter();
+    // TODO(014): Separate token owner from mint owner.
+    let token_account_owner = next_account_info(account_info_iter)?;
 
-    let initializer = next_account_info(account_info_iter)?;
-
-    if !initializer.is_signer {
+    if !token_account_owner.is_signer {
       return Err(ProgramError::MissingRequiredSignature);
     }
     let storage_account = next_account_info(account_info_iter)?;
-    let lx_token_account = next_account_info(account_info_iter)?;
+    let vault_token_account = next_account_info(account_info_iter)?;
     let llx_token_mint_id = next_account_info(account_info_iter)?;
     let token_program = next_account_info(account_info_iter)?;
     let strategy_program = next_account_info(account_info_iter)?;
     let rent = &Rent::from_account_info(next_account_info(account_info_iter)?)?;
 
-    if *lx_token_account.owner != spl_token::id() || *llx_token_mint_id.owner != spl_token::id() {
+    if *vault_token_account.owner != spl_token::id() || *llx_token_mint_id.owner != spl_token::id() {
       return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -128,32 +128,8 @@ impl Processor {
 
     storage_info.is_initialized = true;
     storage_info.hodl = hodl;
+    storage_info.vault_token_account = *vault_token_account.key;
     storage_info.llx_token_mint_id = *llx_token_mint_id.key;
-    msg!("Setting auth");
-    if hodl {
-      msg!("Transferring program X token ownership");
-      let x_token_account = next_account_info(account_info_iter)?;
-      storage_info.x_token_account = COption::Some(*x_token_account.key);
-      // Transfer ownership of the temp account to this program via a derived address.
-      let (pda, _bump_seed) = Pubkey::find_program_address(&[b"vault"], program_id);
-      let account_owner_change_ix = spl_token::instruction::set_authority(
-        token_program.key,
-        x_token_account.key,
-        Some(&pda),
-        spl_token::instruction::AuthorityType::AccountOwner,
-        initializer.key,
-        &[&initializer.key],
-      )?;
-      invoke(
-        &account_owner_change_ix,
-        &[
-          x_token_account.clone(),
-          initializer.clone(),
-          token_program.clone(),
-        ],
-      )?;
-    }
-    println!("strategy_program.key: {}", strategy_program.key);
     storage_info.strategy_program_id = *strategy_program.key;
     storage_info.strategy_program_deposit_instruction_id = strategy_program_deposit_instruction_id;
     storage_info.strategy_program_withdraw_instruction_id =
@@ -161,57 +137,53 @@ impl Processor {
     storage_info.strategy_program_estimate_instruction_id =
       strategy_program_estimate_instruction_id;
     storage_info.last_estimated_value = 0;
+    // Transfer ownership of the temp account to this program via a derived address.
+    let (pda, _bump_seed) = Pubkey::find_program_address(&[b"vault"], program_id);
+    println!("Transferring program vault token {} ownership from {} to {}", vault_token_account.key, token_account_owner.key, pda);
+    let account_owner_change_ix = spl_token::instruction::set_authority(
+      token_program.key,
+      vault_token_account.key,
+      Some(&pda),
+      spl_token::instruction::AuthorityType::AccountOwner,
+      // TODO(014): Separate token owner from mint owner.
+      token_account_owner.key,
+      &[&token_account_owner.key],
+    )?;
+    invoke(
+      &account_owner_change_ix,
+      &[
+        vault_token_account.clone(),
+        token_account_owner.clone(),
+        token_program.clone(),
+      ],
+    )?;
+    msg!("strategy_program.key: {}", strategy_program.key);
 
     // Write the info to the actual account.
     Vault::pack(storage_info, &mut storage_account.data.borrow_mut())?;
 
-    // Transfer ownership of the temp account to this program via a derived address.
-    let (pda, _bump_seed) = Pubkey::find_program_address(&[b"vault"], program_id);
-    let account_owner_change_ix = spl_token::instruction::set_authority(
-      token_program.key,
-      lx_token_account.key,
-      Some(&pda),
-      spl_token::instruction::AuthorityType::AccountOwner,
-      initializer.key,
-      &[&initializer.key],
-    )?;
-
     msg!("Calling the token program to transfer X vault token account ownership");
-    msg!(
-      "Token program: {}. Transferring ownership {} -> {}",
-      token_program.key,
-      initializer.key,
-      pda
-    );
-    invoke(
-      &account_owner_change_ix,
-      &[
-        lx_token_account.clone(),
-        initializer.clone(),
-        token_program.clone(),
-      ],
-    )?;
     let mint_owner_change_ix = spl_token::instruction::set_authority(
       token_program.key,
       llx_token_mint_id.key,
       Some(&pda),
       spl_token::instruction::AuthorityType::MintTokens,
-      initializer.key,
-      &[&initializer.key],
+      token_account_owner.key,
+      &[&token_account_owner.key],
     )?;
 
     msg!("Calling the token program to transfer llX token mint authority");
     msg!(
       "Token program: {}. Transferring minting control {} -> {}",
       token_program.key,
-      initializer.key,
+      token_account_owner.key,
       pda
     );
     invoke(
       &mint_owner_change_ix,
       &[
         llx_token_mint_id.clone(),
-        initializer.clone(),
+        token_account_owner.clone(),
         token_program.clone(),
       ],
     )?;

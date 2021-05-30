@@ -11,8 +11,7 @@ pub struct Vault {
     pub is_initialized: bool,
     pub hodl: bool,
     pub llx_token_mint_id: Pubkey,
-    pub lx_token_account: Pubkey,
-    pub x_token_account: COption<Pubkey>,
+    pub vault_token_account: Pubkey, // Either an X or lX token account.
     // TODO(012): Calculate this dynamically & return with Shared Memory program.
     // This value is only valid so long as the EstimateValue function was called immediately before.
     pub last_estimated_value: u64,
@@ -26,22 +25,21 @@ pub struct Vault {
 impl Sealed for Vault {}
 
 impl Pack for Vault {
-    const LEN: usize = 1 + 1 + 32 + 32 + 36 + 8 + 32 + 1 + 1 + 1 + 36;
+    const LEN: usize = 1 + 1 + 32 + 32 + 8 + 32 + 1 + 1 + 1 + 36;
     fn unpack_from_slice(src: &[u8]) -> Result<Self, ProgramError> {
         let src = array_ref![src, 0, Vault::LEN];
         let (
             is_initialized,
             hodl,
             llx_token_mint_id,
-            lx_token_account,
-            x_token_account,
+            vault_token_account,
             last_estimated_value,
             strategy_program_id,
             strategy_program_deposit_instruction_id,
             strategy_program_withdraw_instruction_id,
             strategy_program_estimate_instruction_id,
             strategy_data_account,
-        ) = array_refs![src, 1, 1, 32, 32, 36, 8, 32, 1, 1, 1, 36];
+        ) = array_refs![src, 1, 1, 32, 32, 8, 32, 1, 1, 1, 36];
 
         let hodl = match hodl {
             [0] => false,
@@ -55,13 +53,11 @@ impl Pack for Vault {
         };
 
         let strategy_data_account = unpack_coption_key(strategy_data_account)?;
-        let x_token_account = unpack_coption_key(x_token_account)?;
         Ok(Vault {
             is_initialized,
             hodl,
             llx_token_mint_id: Pubkey::new_from_array(*llx_token_mint_id),
-            lx_token_account: Pubkey::new_from_array(*lx_token_account),
-            x_token_account,
+            vault_token_account: Pubkey::new_from_array(*vault_token_account),
             last_estimated_value: u64::from_le_bytes(*last_estimated_value),
             strategy_program_id: Pubkey::new_from_array(*strategy_program_id),
             strategy_program_deposit_instruction_id: strategy_program_deposit_instruction_id[0],
@@ -77,22 +73,20 @@ impl Pack for Vault {
             is_initialized_dst,
             hodl_dst,
             llx_token_mint_id_dst,
-            lx_token_account_dst,
-            x_token_account_dst,
+            vault_token_account_dst,
             last_estimated_value_dst,
             strategy_program_id_dst,
             strategy_program_deposit_instruction_id_dst,
             strategy_program_withdraw_instruction_id_dst,
             strategy_program_estimate_instruction_id_dst,
             strategy_data_account_dst,
-        ) = mut_array_refs![dst, 1, 1, 32, 32, 36, 8, 32, 1, 1, 1, 36];
+        ) = mut_array_refs![dst, 1, 1, 32, 32, 8, 32, 1, 1, 1, 36];
 
         let Vault {
             is_initialized,
             hodl,
             llx_token_mint_id,
-            lx_token_account,
-            x_token_account,
+            vault_token_account,
             last_estimated_value,
             strategy_program_id,
             strategy_program_deposit_instruction_id,
@@ -104,8 +98,7 @@ impl Pack for Vault {
         is_initialized_dst[0] = *is_initialized as u8;
         hodl_dst[0] = *hodl as u8;
         llx_token_mint_id_dst.copy_from_slice(llx_token_mint_id.as_ref());
-        lx_token_account_dst.copy_from_slice(lx_token_account.as_ref());
-        pack_coption_key(x_token_account, x_token_account_dst);
+        vault_token_account_dst.copy_from_slice(vault_token_account.as_ref());
         strategy_program_id_dst.copy_from_slice(strategy_program_id.as_ref());
         last_estimated_value_dst.copy_from_slice(&last_estimated_value.to_le_bytes());
         strategy_program_deposit_instruction_id_dst[0] = *strategy_program_deposit_instruction_id;

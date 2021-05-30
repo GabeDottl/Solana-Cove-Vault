@@ -42,9 +42,11 @@ async fn test_hodl_vault() {
   // For succintnesss, we set all of these up together:
   let mint_client_vault_accounts =
     create_tokens_and_accounts(&mut program_test_context, 4, 3).await;
+  println!("XXXX");
 
   // Create Vault account
   let hodl_vault_storage_account = Keypair::new();
+  let vault_token_account: &Keypair = &mint_client_vault_accounts[0][2];
   let mut transaction = Transaction::new_with_payer(
     &[
       // Create Vault storage acccount.
@@ -60,12 +62,11 @@ async fn test_hodl_vault() {
         &::Vault::id(),
         &program_test_context.payer.pubkey(),
         &hodl_vault_storage_account.pubkey(),
-        &mint_client_vault_accounts[1][2].pubkey(), // vault_lx_token account
+        &vault_token_account.pubkey(), // vault_token account (X)
         &mint_client_vault_accounts[2][0].pubkey(), // llx mint account
         &spl_token::id(),
         &::Vault::id(), // Strategy program ID
         true,           // hodl
-        COption::Some(mint_client_vault_accounts[0][2].pubkey()), // vault_lx_token account
         99,             // unused deposit inst. ID
         99,             // unused withdraw inst. ID
         99,             // unused estimate value inst. ID
@@ -87,7 +88,6 @@ async fn test_hodl_vault() {
   );
 
   // Transact with hodl vault.
-  let (pda, bump_seed) = Pubkey::find_program_address(&[b"vault"], &::Vault::id());
   let mut transaction = Transaction::new_with_payer(
     &[
       // Generate a bunch of X tokens and send them to the appropriate client-managed token acct.
@@ -129,6 +129,7 @@ async fn test_hodl_vault() {
       .await,
     Ok(())
   );
+  println!("XXXX9");
   // Ensure accounts have correct balances.
   // Due to Rust semantics limitations around borrowing, we don't pass an expected owner.
   check_token_account(
@@ -138,9 +139,12 @@ async fn test_hodl_vault() {
     900,
   )
   .await;
+  println!("Checking vault_token_account_switched");
+  let (pda, bump_seed) = Pubkey::find_program_address(&[b"vault"], &::Vault::id());
+  println!("Test pda {} ", pda);
   check_token_account(
     &mut program_test_context,
-    &mint_client_vault_accounts[0][2].pubkey(),
+    &vault_token_account.pubkey(),
     &COption::Some(pda),
     100,
   )
@@ -151,13 +155,6 @@ async fn test_hodl_vault() {
     AccountMeta::new_readonly(mint_client_vault_accounts[0][2].pubkey(), false)
   ];
   check_vault_value(&mut program_test_context, additional_account_metas, 100).await;
-  check_token_account(
-    &mut program_test_context,
-    &mint_client_vault_accounts[1][2].pubkey(),
-    &COption::Some(pda),
-    0,
-  )
-  .await;
 
   let mut transaction = Transaction::new_with_payer(
     &[
@@ -190,6 +187,7 @@ async fn test_hodl_vault() {
       .await,
     Ok(())
   );
+  println!("XXXX0");
   check_token_account(
     &mut program_test_context,
     &mint_client_vault_accounts[0][1].pubkey(),
@@ -222,12 +220,11 @@ async fn test_hodl_vault() {
         &::Vault::id(),
         &program_test_context.payer.pubkey(),
         &wrapper_vault_storage_account.pubkey(),
-        &mint_client_vault_accounts[2][2].pubkey(), // vault_llx_token account
+        &mint_client_vault_accounts[2][2].pubkey(), // vault_token account (llX)
         &mint_client_vault_accounts[3][0].pubkey(), // lllx mint account
         &spl_token::id(),
         &::Vault::id(), // Strategy program ID
         false,          // hodl
-        COption::None,  // Unused vault_lx_token account
         1,              // deposit inst. ID
         2,              // withdraw inst. ID
         3,              // estimate value inst. ID
@@ -288,6 +285,7 @@ async fn test_hodl_vault() {
       .await,
     Ok(())
   );
+  println!("XXXX1");
   // Ensure accounts have correct balances.
   // Due to Rust semantics limitations around borrowing, we don't pass an expected owner.
   check_token_account(
@@ -314,16 +312,6 @@ async fn test_hodl_vault() {
     AccountMeta::new_readonly(mint_client_vault_accounts[0][2].pubkey(), false)
   ];
   check_vault_value(&mut program_test_context, additional_account_metas, 100).await;
-  
-  check_token_account(
-    &mut program_test_context,
-    &mint_client_vault_accounts[1][2].pubkey(),
-    &COption::Some(pda),
-    0,
-  )
-  .await;
-
-
   
   let mut transaction = Transaction::new_with_payer(
     &[
@@ -392,11 +380,14 @@ async fn check_token_account(
     .await
     .unwrap()
     .expect("Account unretrievable");
+  println!("check_token_account");
   assert_eq!(token_account.owner, spl_token::id());
   let internal_account = spl_token::state::Account::unpack(&token_account.data).unwrap();
   if expected_owner.is_some() {
+    println!("Error: token {} Got {} Expected {}", token_account_key, internal_account.owner, expected_owner.unwrap());
     assert_eq!(internal_account.owner, expected_owner.unwrap());
   }
+  println!("amounts: {} {}", internal_account.amount, expected_amount);
   assert_eq!(internal_account.amount, expected_amount);
 }
 
@@ -464,6 +455,7 @@ async fn create_tokens_and_accounts(
   num_tokens: u64,
   num_accounts: u64,
 ) -> Vec<Vec<Keypair>> {
+  println!("program_test_context.payer.pubkey() {}", program_test_context.payer.pubkey());
   let mint_client_vault_accounts = (1..(num_tokens + 1))
     .map(|_| {
       (1..(num_accounts + 2))

@@ -42,14 +42,14 @@ pub enum VaultInstruction {
     /// a HODL vault. Also, drop the strategy_data_account - it's not needed.
     ///
     /// Accounts expected:
-    /// `[signer]` initializer of the lx token account
+    /// // TODO(014): Separate token owner from mint owner.
+    /// `[signer]` Vault token account owner & mint owner
     /// `[writeable]` Vault storage account (vault ID)
-    /// `[]` lX token wallet account
-    /// `[]` The llX token mint account
+    /// `[]` Vault's lX token account or X token account if hodling  
+    /// `[]` The llX mint account
     /// `[]` The strategy program
     /// `[]` The rent sysvar
     /// `[]` (Optional) Strategy instance data account
-    /// `[]` (Optional) X token account if hodling
     InitializeVault {
         // TODO(007): Governance address, strategist address, keeper address.
         // TODO(008): Withdrawal fee.
@@ -208,34 +208,29 @@ impl VaultInstruction {
         vault_program_id: &Pubkey,
         initializer: &Pubkey,
         vault_storage_account: &Pubkey,
-        lx_token_account: &Pubkey,
+        vault_token_account: &Pubkey,
         llx_token_mint_id: &Pubkey,
         token_program: &Pubkey,
         strategy_program: &Pubkey,
         hodl: bool,
-        x_token_account: COption<Pubkey>,
         strategy_program_deposit_instruction_id: u8,
         strategy_program_withdraw_instruction_id: u8,
         strategy_program_estimate_instruction_id: u8,
     ) -> Result<Instruction, ProgramError> {
-        let mut accounts = vec![
+        let accounts = vec![
             AccountMeta::new_readonly(*initializer, true),
             AccountMeta::new(*vault_storage_account, false),
-            AccountMeta::new(*lx_token_account, false),
+            AccountMeta::new(*vault_token_account, false),
             AccountMeta::new(*llx_token_mint_id, false),
             AccountMeta::new_readonly(*token_program, false),
             AccountMeta::new_readonly(*strategy_program, false),
             AccountMeta::new_readonly(sysvar::rent::id(), false),
         ];
-        assert_eq!(hodl, x_token_account.is_some());
-        if hodl {
-            accounts.push(AccountMeta::new(x_token_account.unwrap(), false));
-        }
         let data = VaultInstruction::InitializeVault {
-            hodl,
             strategy_program_deposit_instruction_id,
             strategy_program_withdraw_instruction_id,
             strategy_program_estimate_instruction_id,
+            hodl,
         }
         .pack();
         Ok(Instruction {
