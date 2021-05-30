@@ -40,6 +40,8 @@ TODO(XXX) corresponds to a TODO location in-code.
 * TODO(Security): Fix vulnerabilities.
 * TODO(013): Add account metas.
 * TODO: Split strategy_api into its own separate, public crate & repo.
+* TODO(014): Separate token owner from mint owner.
+* TODO: Cove version of https://yearn-hub.vercel.app/
 
 ### Environment Setup
 1. Install Rust from https://rustup.rs/
