@@ -1,11 +1,9 @@
 module.exports = {
   clearMocks: true,
   testEnvironment: "node",
-  testMatch: [
-    "<rootDir>/src/tests/*.(ts|js|jsx?|tsx?)"
-  ],
+  testMatch: ["<rootDir>/src/tests/*.(ts|js|jsx?|tsx?)"],
   transform: {
-    "^.+\\.(t|j)sx?$": "ts-jest"
+    "^.+\\.(t|j)sx?$": "ts-jest",
   },
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   // Jest screws with the definition of Buffer to not be a UInt8Array which breaks Solana:
@@ -13,6 +11,6 @@ module.exports = {
   // Fix (copied below): https://github.com/facebook/jest/issues/4422
   globals: {
     Uint8Array: Uint8Array,
-    ArrayBuffer: ArrayBuffer
-  }
+    ArrayBuffer: ArrayBuffer,
+  },
 };

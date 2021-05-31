@@ -1,5 +1,5 @@
-import { Connection } from '@solana/web3.js';
-let url
+import { Connection } from "@solana/web3.js";
+let url;
 
 // switch (process.env.CLUSTER) {
 //     case 'mainnet-beta':
@@ -25,13 +25,13 @@ let url
 //         url = 'http://devnet.solana.com'
 // }
 
-url = 'http://devnet.solana.com'
+url = "http://devnet.solana.com";
 
 export async function getNodeConnection() {
-    const connection = new Connection(url, 'singleGossip')
-    const version = await connection.getVersion()
-    console.log('Connection to cluster established:', url, version)
-    return connection
+  const connection = new Connection(url, "singleGossip");
+  const version = await connection.getVersion();
+  console.log("Connection to cluster established:", url, version);
+  return connection;
 }
 
 // module.exports = { getNodeConnection };
