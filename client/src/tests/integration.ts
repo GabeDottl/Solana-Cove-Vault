@@ -61,7 +61,7 @@ async function addLamports(
 }
 
 test("Test", async (done) => {
-  jest.setTimeout(60000);
+  jest.setTimeout(120000);
   const connection = await getNodeConnection();
   const payerAccount = new Keypair(); //Keypair.fromSecretKey(PAYER_SECRET);
   await addLamports(connection, payerAccount);
@@ -85,8 +85,8 @@ test("Test", async (done) => {
     payerAccount.publicKey
   );
   // const vaultTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
-  // await addLamports(connection, payerAccount, 10000000);
-  // await tokenA.mintTo(clientTokenAAccountKey, payerAccount, [], 1000);
+  await addLamports(connection, payerAccount, 10000000);
+  await tokenA.mintTo(clientTokenAAccountKey, payerAccount, [], 1000);
   // console.log(`Created accounts and sent 1000 tokens to ${clientTokenAAccountKey}.`);
   // let account_info = await tokenA.getAccountInfo(clientTokenAAccountKey);
   // expect(account_info.amount.toString()).toEqual('1000');
@@ -103,7 +103,9 @@ test("Test", async (done) => {
         VAULT_PROGRAM_ID,
         vaultStorageAccount,
         clientTokenAAccountKey,
-        vaultTokenAAccountKey
+        vaultTokenAAccountKey,
+        10
+
       ).then((_) => {
         console.log("Deposited into vault");
       });
