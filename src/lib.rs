@@ -8,4 +8,4 @@ pub mod state;
 
 
 // Random based on Token ID's ID. Defines Vault::id().
-solana_program::declare_id!("VscrowegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+solana_program::declare_id!("pgqjtyAATGmAuG2PyNH8u9YhYmiXVYgzsDuYcmht3Nc");

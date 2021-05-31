@@ -8,6 +8,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID
 } from '@solana/spl-token';
 import {getNodeConnection} from '../nodeConnection';
+import { createHodlVault } from '../cove_api';
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -21,10 +22,13 @@ async function addLamports(connection: Connection, account: Keypair, lamports = 
     return account;
   }
 
-  try {
-    await connection.requestAirdrop(account.publicKey, lamports);
-  } catch (e) {
-    console.log(`Airdrop failed: ${e}`);
+  for (let retry = 0; retry < 10; retry++) {
+    try {
+      await connection.requestAirdrop(account.publicKey, lamports);
+      break;
+    } catch (e) {
+      console.log(`Airdrop failed: ${e}`);
+    }
   }
 
   for (let retry = 0; retry < 10; retry++) {
@@ -59,62 +63,14 @@ test('Test', async (done) => {
   let account_info = await tokenA.getAccountInfo(clientTokenAAccountKey);
   expect(account_info.amount.toString()).toEqual('1000');
   console.log(`Confirmed balance of 1000 tokens.`);
-  let instruction = transferInstruction(clientTokenAAccountKey, vaultTokenAAccountKey, payerAccount.publicKey, new BN(100));
-  const transaction = new Transaction();
-  transaction.add(instruction);
-  await sendAndConfirmTransaction(connection, transaction, [payerAccount]);
-  console.log('Transferred!');
-  account_info = await tokenA.getAccountInfo(vaultTokenAAccountKey);
-  expect(account_info.amount.toString()).toEqual('100');
-  console.log('Transfer confirmed');
+
+  // Setup the HODL vault for tokenA
+  await addLamports(connection, payerAccount, 10000000);
+  await createHodlVault(connection, payerAccount, tokenA);
+  
   done()
+  
 });
-
-function transferInstruction(
-  source: PublicKey,
-  destination: PublicKey,
-  owner: PublicKey,
-  amount: BN,
-) {
-  const keys = [
-    { pubkey: source, isSigner: false, isWritable: true },
-    { pubkey: destination, isSigner: false, isWritable: true },
-    { pubkey: owner, isSigner: true, isWritable: false },
-  ];
-
-  return new TransactionInstruction({
-    keys,
-    data: encodeTokenInstructionData({
-      transfer: { amount },
-    }),
-    programId: TOKEN_PROGRAM_ID,
-  });
-}
-
-export function encodeTokenInstructionData(instruction: any) {
-  const LAYOUT = BufferLayout.union(BufferLayout.u8('instruction'));
-  LAYOUT.addVariant(
-    0,
-    BufferLayout.struct([
-      BufferLayout.u8('decimals'),
-      BufferLayout.blob(32, 'mintAuthority'),
-      BufferLayout.u8('freezeAuthorityOption'),
-      BufferLayout.blob(32, 'freezeAuthority'),
-    ]),
-    'initializeMint',
-  );
-  LAYOUT.addVariant(1, BufferLayout.struct([]), 'initializeAccount');
-  LAYOUT.addVariant(3, BufferLayout.struct([BufferLayout.nu64('amount')]), 'transfer');
-  LAYOUT.addVariant(4, BufferLayout.struct([BufferLayout.nu64('amount')]), 'approve');
-  LAYOUT.addVariant(7, BufferLayout.struct([BufferLayout.nu64('amount')]), 'mintTo');
-  LAYOUT.addVariant(8, BufferLayout.struct([BufferLayout.nu64('amount')]), 'burn');
-  LAYOUT.addVariant(9, BufferLayout.struct([]), 'closeAccount');
-
-  const instructionMaxSpan = Math.max(...Object.values(LAYOUT.registry).map((r: typeof BufferLayout) => r.span));
-  const b = Buffer.alloc(instructionMaxSpan);
-  const span = LAYOUT.encode(instruction, b);
-  return b.slice(0, span);
-}
 
 export async function makeAccount(
   connection: Connection,
