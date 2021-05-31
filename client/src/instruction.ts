@@ -8,10 +8,7 @@ import {
 } from '@solana/spl-token';
 import { makeAccount } from './tests/integration';
 
-export const VAULT_PROGRAM_ID = new PublicKey('pgqjtyAATGmAuG2PyNH8u9YhYmiXVYgzsDuYcmht3Nc');
-
-// http://pabigot.github.io/buffer-layout/module-Layout-Union.html
-const VAULT_INSTRUCTION_LAYOUT = BufferLayout.union(BufferLayout.u8('instruction'));
+export const VAULT_PROGRAM_ID = new PublicKey('9VxcdZKmmL6xwJWZorYnD29tZte5M29XAiKv3ZEW2AJd');
 
 // Accounts expected:
 // `[signer]` initializer of the lx token account
@@ -91,23 +88,19 @@ export async function createHodlVault(connection: Connection, payer_account: Key
   // let vault_token_account_owner = makeAccount(connection, payer_account, Token, PROGRAM_ID);
   const token_vault_derivative = await Token.createMint(connection, payer_account, payer_account.publicKey, null, 6, TOKEN_PROGRAM_ID);
 
-  const vault_vault_token_account = await token_vault_derivative.createAccount(payer_account.publicKey);
+  // const vault_vault_token_account = await token_vault_derivative.createAccount(payer_account.publicKey);
   let vault_storage_account = await makeAccount(connection, payer_account, 1 + 1 + 32 + 32 + 8 + 32 + 1 + 1 + 1 + 36, VAULT_PROGRAM_ID);
+  console.log('vault_storage_account ', vault_storage_account);
   const vault_token_account = await token_x.createAccount(payer_account.publicKey);
   // let vault_token_account = makeAccount(connection, payer_account, numBytes, PROGRAM_ID);
   // let llx_token_mint_id = makeAccount(connection, payer_account, numBytes, PROGRAM_ID);
-  let token_program = TOKEN_PROGRAM_ID;// new PublicKey(TOKEN_PROGRAM_ID); // makeAccount(connection, payer_account, numBytes, PROGRAM_ID);
-  let strategy_program = VAULT_PROGRAM_ID;//makeAccount(connection, payer_account, numBytes, PROGRAM_ID);
-  let rent_sysvar = SYSVAR_RENT_PUBKEY;// makeAccount(connection, payer_account, numBytes, PROGRAM_ID);
   let instruction = initializeVaultInstruction(
     payer_account.publicKey, // TODO: Separate owner
     vault_storage_account,
-    vault_vault_token_account,
+    vault_token_account,
     token_vault_derivative.publicKey,
     TOKEN_PROGRAM_ID,
     VAULT_PROGRAM_ID,
-    // vault_storage_account,
-    vault_token_account,
     1,
     2,
     3,
@@ -115,9 +108,14 @@ export async function createHodlVault(connection: Connection, payer_account: Key
   let transaction = new Transaction();
   transaction.add(instruction);
   console.log("Sending instruction to create HODL vault");
-  sendAndConfirmTransaction(connection, transaction, [payer_account]);
+  await sendAndConfirmTransaction(connection, transaction, [payer_account]);
+  console.log('vault_storage_account ', vault_storage_account.toBase58(), connection.getAccountInfo(vault_storage_account));
+  console.log('vault_token_account ', vault_token_account.toBase58(), connection.getAccountInfo(vault_token_account));
+  console.log("Created hodl vault")
+  let account_info = await connection.getAccountInfo(vault_storage_account);
+  console.log('data_account ', vault_storage_account.toBase58(), account_info);
+  return vault_storage_account;
 }
-
 
 // Note: These instructions mirror instruction.rs.
 function initializeVaultInstruction(
@@ -127,13 +125,17 @@ function initializeVaultInstruction(
   llx_token_mint_id: PublicKey,
   token_program: PublicKey,
   strategy_program: PublicKey,
-  // strategy_data_account: PublicKey | null,
-  x_token_account: PublicKey | null,
   strategy_program_deposit_instruction_id: number,
   strategy_program_withdraw_instruction_id: number,
   strategy_program_estimate_value_instruction_id: number,
   hodl: boolean
 ) {
+  console.log('vault_token_account_owner ', vault_token_account_owner.toBase58());
+  console.log('vault_storage_account ', vault_storage_account.toBase58());
+  console.log('vault_token_account ', vault_token_account.toBase58());
+  console.log('llx_token_mint_id ', llx_token_mint_id.toBase58());
+  console.log('token_program ', token_program.toBase58());
+  console.log('strategy_program ', strategy_program.toBase58());
   const accounts = [
     { pubkey: vault_token_account_owner, isSigner: true, isWritable: false },
     { pubkey: vault_storage_account, isSigner: false, isWritable: true },
@@ -143,10 +145,6 @@ function initializeVaultInstruction(
     { pubkey: strategy_program, isSigner: false, isWritable: false },
     { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false }
   ];
-  // assert!(hodl, x_token_account.is_some());
-  if (hodl && x_token_account != null) {
-    accounts.push({ pubkey: x_token_account, isWritable: true, isSigner: false });
-  }
   let data = {
     instruction: InitializeVault,
     strategy_program_deposit_instruction_id: strategy_program_deposit_instruction_id,
@@ -158,52 +156,93 @@ function initializeVaultInstruction(
   return new TransactionInstruction({
     keys: accounts,
     data: encodeInstructionData(data, vault_instruction_layout['InitializeVault'][1]),
-    programId: new PublicKey(VAULT_PROGRAM_ID)
+    programId: VAULT_PROGRAM_ID
   });
 }
 
-// export function transferInstruction(
-//   source: PublicKey,
-//   destination: PublicKey,
-//   owner: PublicKey,
-//   amount: BN,
-// ) {
-//   const keys = [
-//     { pubkey: source, isSigner: false, isWritable: true },
-//     { pubkey: destination, isSigner: false, isWritable: true },
-//     { pubkey: owner, isSigner: true, isWritable: false },
-//   ];
+export async function deposit(connection: Connection, payer_account: Keypair, strategy_program: PublicKey, vault_account: PublicKey, client_x_token_account: PublicKey, vault_x_token_account: PublicKey) : Promise<void> {
+  console.log('vault_account ', vault_account.toBase58());
+  let transaction = new Transaction();
+  console.log('payer_account {}', payer_account.publicKey.toBase58());
+  console.log('vault_account {}', vault_account.toBase58());
+  transaction.add(depositInstruction(VAULT_PROGRAM_ID, TOKEN_PROGRAM_ID, client_x_token_account, vault_x_token_account, [
+    { isWritable: false, pubkey: payer_account.publicKey, isSigner: true },
+    { isWritable: true, pubkey: vault_account, isSigner: false },
+    { isWritable: false, pubkey: strategy_program, isSigner: false },
+    { isWritable: false, pubkey: vault_x_token_account, isSigner: false },
+  ], 10));
+  sendAndConfirmTransaction(connection, transaction, [payer_account]);
+}
 
-//   return new TransactionInstruction({
-//     keys,
-//     data: encodeTokenInstructionData({
-//       transfer: { amount },
-//     }, 3),
-//     programId: TOKEN_PROGRAM_ID,
-//   });
-// }
+function depositInstruction(
+  vault_program_id: PublicKey,
+  token_program_id: PublicKey,
+  source_pubkey: PublicKey,
+  target_pubkey: PublicKey,
+  additional_account_metas: { isWritable: boolean; pubkey: PublicKey; isSigner: boolean; }[],
+  amount: number,
+) {
+  console.log('vault_program_id {}', vault_program_id.toBase58());
+  console.log('token_program_id {}', token_program_id.toBase58());
+  console.log('source_pubkey {}', source_pubkey.toBase58());
+  console.log('target_pubkey {}', target_pubkey.toBase58());
+  let data = { instruction_num: vault_instruction_layout['Deposit'][0], amount };
+  let instructionData = encodeInstructionData(data, vault_instruction_layout['Deposit'][1])
+  return createTransferInstruction(
+    instructionData,
+    vault_program_id,
+    token_program_id,
+    source_pubkey,
+    target_pubkey,
+    additional_account_metas,
+  );
+}
 
-// const TOKEN_INSTRUCTION_LAYOUT = BufferLayout.union(BufferLayout.u8('instruction'));
-// TOKEN_INSTRUCTION_LAYOUT.addVariant(
-//   0,
-//   BufferLayout.struct([BufferLayout.u8('instruction_num'),
-//   BufferLayout.u8('decimals'),
-//   BufferLayout.blob(32, 'mintAuthority'),
-//   BufferLayout.u8('freezeAuthorityOption'),
-//   BufferLayout.blob(32, 'freezeAuthority'),
-//   ]),
-//   'initializeMint',
-// );
-// TOKEN_INSTRUCTION_LAYOUT.addVariant(1, BufferLayout.struct([BufferLayout.u8('instruction_num'),]), 'initializeAccount');
-// TOKEN_INSTRUCTION_LAYOUT.addVariant(3, BufferLayout.struct([BufferLayout.u8('instruction_num'), BufferLayout.nu64('amount')]), 'transfer');
-// TOKEN_INSTRUCTION_LAYOUT.addVariant(4, BufferLayout.struct([BufferLayout.u8('instruction_num'), BufferLayout.nu64('amount')]), 'approve');
-// TOKEN_INSTRUCTION_LAYOUT.addVariant(7, BufferLayout.struct([BufferLayout.u8('instruction_num'), BufferLayout.nu64('amount')]), 'mintTo');
-// TOKEN_INSTRUCTION_LAYOUT.addVariant(8, BufferLayout.struct([BufferLayout.u8('instruction_num'), BufferLayout.nu64('amount')]), 'burn');
-// TOKEN_INSTRUCTION_LAYOUT.addVariant(9, BufferLayout.struct([BufferLayout.u8('instruction_num'),]), 'closeAccount');
+function withdrawInstruction(
+  vault_program_id: PublicKey,
+  token_program_id: PublicKey,
+  source_pubkey: PublicKey,
+  target_pubkey: PublicKey,
+  additional_account_metas: { isWritable: boolean; pubkey: PublicKey; isSigner: boolean; }[],
+  amount: number,
+) {
+  console.log('vault_program_id {}', vault_program_id.toBase58());
+  console.log('token_program_id {}', token_program_id.toBase58());
+  console.log('source_pubkey {}', source_pubkey.toBase58());
+  console.log('target_pubkey {}', target_pubkey.toBase58());
+  let data = { instruction_num: vault_instruction_layout['Deposit'][0], amount };
+  let instructionData = encodeInstructionData(data, vault_instruction_layout['Deposit'][1])
+  return createTransferInstruction(
+    instructionData,
+    vault_program_id,
+    token_program_id,
+    source_pubkey,
+    target_pubkey,
+    additional_account_metas,
+  );
+}
+function createTransferInstruction(
+  data: Buffer,
+  program_id: PublicKey,
+  token_program_id: PublicKey,
+  source_pubkey: PublicKey,
+  target_pubkey: PublicKey,
+  additional_account_metas: { isWritable: boolean; pubkey: PublicKey; isSigner: boolean; }[]
+) {
+  let accounts: { isWritable: boolean; pubkey: PublicKey; isSigner: boolean; }[] = [
+    { isWritable: false, pubkey: token_program_id, isSigner: false },
+    { isWritable: true, pubkey: source_pubkey, isSigner: false },
+    { isWritable: true, pubkey: target_pubkey, isSigner: false },
+  ].concat(additional_account_metas);
+  // accounts = accounts;
+  return new TransactionInstruction({
+    keys: accounts,
+    data,
+    programId: VAULT_PROGRAM_ID,
+  }
+  );
+}
 
-// function encodeTokenInstructionData(instruction: Object, instruction_num: number) {
-//   return encodeInstructionData(instruction, TOKEN_INSTRUCTION_LAYOUT.getVariant(instruction_num))
-// }
 
 function encodeInstructionData(instruction: Object, layout: typeof BufferLayout) {
   // const instructionMaxSpan = Math.max(...Object.values(layout.registry).map((r: typeof BufferLayout) => r.span));
@@ -235,6 +274,7 @@ export async function createAccount(
     transaction,
     [payer_account, dataAccount]
   );
+  
 
   return dataAccount.publicKey
 }

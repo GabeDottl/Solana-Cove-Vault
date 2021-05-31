@@ -4,6 +4,7 @@
 # https://raw.githubusercontent.com/stableswap/stable-swap-program/master/scripts/deploy-stable-swap.sh
 set -ex
 
+cargo test-bpf 
 if [ ! -d "./target/deploy" ]; then
     ./do.sh build
 fi
@@ -38,7 +39,9 @@ solana config set --url $CLUSTER_URL
 sleep 1
 # solana airdrop 10 
 #  
-VAULT_ID="$(solana program deploy target/deploy/vault.so --output json | jq .programId -r)"
-echo "Cove ProgramID:" $VAULT_ID # pgqjtyAATGmAuG2PyNH8u9YhYmiXVYgzsDuYcmht3Nc
+VAULT_ID="$(solana program deploy target/deploy/vault.so --output json --program-id 9VxcdZKmmL6xwJWZorYnD29tZte5M29XAiKv3ZEW2AJd| jq .programId -r)"
+echo "Cove ProgramID:" $VAULT_ID
+echo "Expected: 9VxcdZKmmL6xwJWZorYnD29tZte5M29XAiKv3ZEW2AJd"
+
 jq -n --arg CLUSTER_URL ${CLUSTER_URL} --arg VAULT_ID ${VAULT_ID} \
     '{clusterUrl: $CLUSTER_URL, "vaultProgramId": $VAULT_ID}' > last-deploy.json

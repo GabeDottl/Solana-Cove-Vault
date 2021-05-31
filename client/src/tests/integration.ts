@@ -8,7 +8,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID
 } from '@solana/spl-token';
 import {getNodeConnection} from '../nodeConnection';
-import { createHodlVault } from '../cove_api';
+import { VAULT_PROGRAM_ID, createHodlVault, deposit } from '../instruction';
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -50,26 +50,31 @@ test('Test', async (done) => {
   await addLamports(connection, payerAccount);
   console.log("Setup payer account");
   const tokenA = await Token.createMint(connection, payerAccount, payerAccount.publicKey, null, 6, TOKEN_PROGRAM_ID);
-  const tokenlA = await Token.createMint(connection, payerAccount, payerAccount.publicKey, null, 6, TOKEN_PROGRAM_ID);
-  console.log("Created mints");
-  await addLamports(connection, payerAccount, 10000000);
+  // const tokenlA = await Token.createMint(connection, payerAccount, payerAccount.publicKey, null, 6, TOKEN_PROGRAM_ID);
+  // console.log("Created mints");
+  // await addLamports(connection, payerAccount, 10000000);
   const clientTokenAAccountKey = await tokenA.createAccount(payerAccount.publicKey);
-  const clientTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
+  // const clientTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
   const vaultTokenAAccountKey = await tokenA.createAccount(payerAccount.publicKey);
-  const vaultTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
-  await addLamports(connection, payerAccount, 10000000);
-  await tokenA.mintTo(clientTokenAAccountKey, payerAccount, [], 1000);
-  console.log(`Created accounts and sent 1000 tokens to ${clientTokenAAccountKey}.`);
-  let account_info = await tokenA.getAccountInfo(clientTokenAAccountKey);
-  expect(account_info.amount.toString()).toEqual('1000');
-  console.log(`Confirmed balance of 1000 tokens.`);
+  // const vaultTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
+  // await addLamports(connection, payerAccount, 10000000);
+  // await tokenA.mintTo(clientTokenAAccountKey, payerAccount, [], 1000);
+  // console.log(`Created accounts and sent 1000 tokens to ${clientTokenAAccountKey}.`);
+  // let account_info = await tokenA.getAccountInfo(clientTokenAAccountKey);
+  // expect(account_info.amount.toString()).toEqual('1000');
+  // console.log(`Confirmed balance of 1000 tokens.`);
 
   // Setup the HODL vault for tokenA
   await addLamports(connection, payerAccount, 10000000);
-  await createHodlVault(connection, payerAccount, tokenA);
+  await createHodlVault(connection, payerAccount, tokenA).then(async vaultStorageAccount => {
+    console.log("Created hodl vault");
+    deposit(connection, payerAccount, VAULT_PROGRAM_ID,  vaultStorageAccount, clientTokenAAccountKey, vaultTokenAAccountKey).then(_ => {
+      console.log("Deposited into vault");
+    });
+  })
+  
   
   done()
-  
 });
 
 export async function makeAccount(
@@ -89,12 +94,12 @@ export async function makeAccount(
       programId: programId
     })
   )
-
   await sendAndConfirmTransaction(
     connection,
     transaction,
     [payerAccount, dataAccount]
   );
-
+  let account_info = await connection.getAccountInfo(dataAccount.publicKey);
+  console.log('data_account ', dataAccount.publicKey.toBase58(), account_info);
   return dataAccount.publicKey
 }

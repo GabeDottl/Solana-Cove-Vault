@@ -42,6 +42,8 @@ TODO(XXX) corresponds to a TODO location in-code.
 * TODO: Split strategy_api into its own separate, public crate & repo.
 * TODO(014): Separate token owner from mint owner.
 * TODO: Cove version of https://yearn-hub.vercel.app/
+* TODO: Cove version of https://yearn.science/
+* TODO: Cleanup - fix snake_case in TS files to be proper camelCase.
 
 ### Environment Setup
 1. Install Rust from https://rustup.rs/

@@ -51,11 +51,11 @@ impl Processor {
         )
       }
       VaultInstruction::Deposit { amount } => {
-        msg!("Instruction: Deposit");
+        msg!("Instruction: Deposit {}", amount);
         Self::process_transfer(program_id, accounts, amount, true)
       }
       VaultInstruction::Withdraw { amount } => {
-        msg!("Instruction: Withdraw");
+        msg!("Instruction: Withdraw {}", amount);
         Self::process_transfer(program_id, accounts, amount, false)
       }
       VaultInstruction::EstimateValue {} => {
@@ -102,18 +102,25 @@ impl Processor {
     let account_info_iter = &mut accounts.iter();
     // TODO(014): Separate token owner from mint owner.
     let token_account_owner = next_account_info(account_info_iter)?;
+    // msg!("token_account_owner {}", token_account_owner.key);
 
     if !token_account_owner.is_signer {
       return Err(ProgramError::MissingRequiredSignature);
     }
     let storage_account = next_account_info(account_info_iter)?;
+    // msg!("storage_account {}", storage_account.key);
     let vault_token_account = next_account_info(account_info_iter)?;
+    msg!("vault_token_account {}", vault_token_account.key);
     let llx_token_mint_id = next_account_info(account_info_iter)?;
+    msg!("llx_token_mint_id {}", llx_token_mint_id.key);
     let token_program = next_account_info(account_info_iter)?;
+    msg!("token_program {}", token_program.key);
     let strategy_program = next_account_info(account_info_iter)?;
+    // msg!("strategy_program {}", strategy_program.key);
     let rent = &Rent::from_account_info(next_account_info(account_info_iter)?)?;
 
-    if *vault_token_account.owner != spl_token::id() || *llx_token_mint_id.owner != spl_token::id() {
+    if *vault_token_account.owner != *token_program.key || *llx_token_mint_id.owner != *token_program.key {
+      msg!("vault_token_account.owner {} != *token_program.key {} llx_token_mint_id {}", vault_token_account.owner, *token_program.key, *llx_token_mint_id.owner);
       return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -137,6 +144,9 @@ impl Processor {
     storage_info.strategy_program_estimate_instruction_id =
       strategy_program_estimate_instruction_id;
     storage_info.last_estimated_value = 0;
+    // Write the info to the actual account.
+    Vault::pack(storage_info, &mut storage_account.data.borrow_mut())?;
+    // msg!("storage_account.data {}", storage_account.data);
     // Transfer ownership of the temp account to this program via a derived address.
     let (pda, _bump_seed) = Pubkey::find_program_address(&[b"vault"], program_id);
     println!("Transferring program vault token {} ownership from {} to {}", vault_token_account.key, token_account_owner.key, pda);
@@ -157,10 +167,7 @@ impl Processor {
         token_program.clone(),
       ],
     )?;
-    msg!("strategy_program.key: {}", strategy_program.key);
 
-    // Write the info to the actual account.
-    Vault::pack(storage_info, &mut storage_account.data.borrow_mut())?;
 
     msg!("Calling the token program to transfer X vault token account ownership");
     let mint_owner_change_ix = spl_token::instruction::set_authority(
@@ -198,17 +205,26 @@ impl Processor {
   ) -> ProgramResult {
     let account_info_iter = &mut accounts.iter();
     let token_program = next_account_info(account_info_iter)?;
+    msg!("token_program {}", token_program.key);
     let source_token_account = next_account_info(account_info_iter)?;
+    msg!("source_token_account {}", source_token_account.key);
     let target_token_account = next_account_info(account_info_iter)?;
+    msg!("target_token_account {}", target_token_account.key);
     // Additional account metas:
     // TODO(009): Support more than one source authority.
     let source_authority = next_account_info(account_info_iter)?;
+    msg!("source_authority {}", source_authority.key);
     let storage_account = next_account_info(account_info_iter)?;
+    msg!("storage_account {}", storage_account.key);
     let strategy_program = next_account_info(account_info_iter)?;
+    msg!("strategy_program {}", strategy_program.key);
 
+    if storage_account.owner != strategy_program.key {
+      msg!("Storage account strat not right");
+    }
     let storage_info = Vault::unpack_unchecked(&storage_account.data.borrow())?;
-    if !storage_info.is_initialized() {
-      msg!("Storage not configured!");
+    if !storage_info.is_initialized {
+      msg!("Storage not configured! {} {}", storage_account.key, storage_info.is_initialized);
       return Err(VaultError::InvalidInstruction.into());
     }
 
