@@ -10,6 +10,10 @@ pub enum VaultError {
     NotRentExempt,
     #[error("Not Implemented")]
     NotImplemented,
+    #[error("Forced crash")]
+    ForcedCrash,
+    #[error("Account inconsistency - possible setup failure")]
+    AccountInconsistency,
 }
 
 impl From<VaultError> for ProgramError {

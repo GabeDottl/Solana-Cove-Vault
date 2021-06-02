@@ -11,12 +11,8 @@ use solana_program::{
   sysvar::{rent::Rent, Sysvar},
 };
 
+use crate::{error::VaultError, instruction::VaultInstruction, state::Vault};
 use strategy_api::strategy_instruction::StrategyInstruction;
-use crate::{
-  error::VaultError,
-  instruction::{VaultInstruction},
-  state::Vault,
-};
 
 pub struct Processor;
 impl Processor {
@@ -28,19 +24,28 @@ impl Processor {
     msg!("Unpacking instruction");
     let instruction = VaultInstruction::unpack(instruction_data)?;
     // TODO(011): Remove dev logs or gate.
-    let account_info_iter = &mut accounts.iter();
-    for (i, account) in account_info_iter.enumerate() {
-      msg!("account #{}:  {}", i, account.key);
-    }
+    // let account_info_iter = &mut accounts.iter();
+    // for (i, account) in account_info_iter.enumerate() {
+    //   msg!("account #{}:  {}", i, account.key);
+    // }
 
+    let mut _debug_crash = false;
     match instruction {
       VaultInstruction::InitializeVault {
         hodl,
         strategy_program_deposit_instruction_id,
         strategy_program_withdraw_instruction_id,
         strategy_program_estimate_instruction_id,
+        debug_crash,
       } => {
         msg!("Instruction: InitializeVault");
+        msg!(
+          "Init vault: dep {} with {} est {}",
+          // hodl,
+          strategy_program_deposit_instruction_id,
+          strategy_program_withdraw_instruction_id,
+          strategy_program_estimate_instruction_id
+        );
         Self::process_initialize_vault(
           program_id,
           accounts,
@@ -48,47 +53,48 @@ impl Processor {
           strategy_program_deposit_instruction_id,
           strategy_program_withdraw_instruction_id,
           strategy_program_estimate_instruction_id,
-        )
+        )?;
+        _debug_crash = debug_crash;
       }
-      VaultInstruction::Deposit { amount } => {
+      VaultInstruction::Deposit {
+        amount,
+        debug_crash,
+      } => {
         msg!("Instruction: Deposit {}", amount);
-        Self::process_transfer(program_id, accounts, amount, true)
+        Self::process_transfer(program_id, accounts, amount, true)?;
+        _debug_crash = debug_crash;
       }
-      VaultInstruction::Withdraw { amount } => {
+      VaultInstruction::Withdraw {
+        amount,
+        debug_crash,
+      } => {
         msg!("Instruction: Withdraw {}", amount);
-        Self::process_transfer(program_id, accounts, amount, false)
+        Self::process_transfer(program_id, accounts, amount, false)?;
+        _debug_crash = debug_crash;
       }
-      VaultInstruction::EstimateValue {} => {
+      VaultInstruction::EstimateValue { debug_crash } => {
         msg!("Instruction: EstimateValue");
-        Self::process_estimate_value(program_id, accounts)
+        Self::process_estimate_value(program_id, accounts)?;
+        _debug_crash = debug_crash;
       }
-      VaultInstruction::WriteData {} => {
+      VaultInstruction::WriteData { debug_crash } => {
         msg!("Instruction: WriteData");
         let (_, data) = instruction_data
           .split_first()
           .ok_or(VaultError::InvalidInstruction)?;
-        Self::process_write_data(accounts, data)
+        Self::process_write_data(accounts, data)?;
+        _debug_crash = debug_crash;
       }
+    }
+
+    if _debug_crash {
+      msg!("Force crashing app.");
+      return Err(VaultError::ForcedCrash.into());
+    } else {
+      Ok(())
     }
   }
 
-  fn process_write_data(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    let account_info_iter = &mut accounts.iter();
-    // TODO(Security): Ensure we don't screw with the other storage accounts. This should probably
-    // be moved to a separate program, like the Shared Memory program...
-    let storage_account = next_account_info(account_info_iter)?;
-    if storage_account.lamports() > 0 {
-      msg!("Data should only be written to temporary accounts");
-      // return Err(VaultError::InvalidInstruction.into()); TODO
-    }
-    if storage_account.data_len() < data.len() {
-      msg!("Need more space in storage account");
-      return Err(ProgramError::InvalidArgument);
-    }
-    // Write data into the temporary account storage.
-    storage_account.data.borrow_mut().clone_from_slice(data);
-    Ok(())
-  }
 
   fn process_initialize_vault(
     program_id: &Pubkey,
@@ -102,13 +108,9 @@ impl Processor {
     let account_info_iter = &mut accounts.iter();
     // TODO(014): Separate token owner from mint owner.
     let token_account_owner = next_account_info(account_info_iter)?;
-    // msg!("token_account_owner {}", token_account_owner.key);
-
-    if !token_account_owner.is_signer {
-      return Err(ProgramError::MissingRequiredSignature);
-    }
+    msg!("token_account_owner {}", token_account_owner.key);
     let storage_account = next_account_info(account_info_iter)?;
-    // msg!("storage_account {}", storage_account.key);
+    // msg!("w {}", storage_account.key);
     let vault_token_account = next_account_info(account_info_iter)?;
     msg!("vault_token_account {}", vault_token_account.key);
     let llx_token_mint_id = next_account_info(account_info_iter)?;
@@ -116,11 +118,17 @@ impl Processor {
     let token_program = next_account_info(account_info_iter)?;
     msg!("token_program {}", token_program.key);
     let strategy_program = next_account_info(account_info_iter)?;
-    // msg!("strategy_program {}", strategy_program.key);
     let rent = &Rent::from_account_info(next_account_info(account_info_iter)?)?;
 
-    if *vault_token_account.owner != *token_program.key || *llx_token_mint_id.owner != *token_program.key {
-      msg!("vault_token_account.owner {} != *token_program.key {} llx_token_mint_id {}", vault_token_account.owner, *token_program.key, *llx_token_mint_id.owner);
+    if *vault_token_account.owner != *token_program.key
+      || *llx_token_mint_id.owner != *token_program.key
+    {
+      msg!(
+        "vault_token_account.owner {} != *token_program.key {} llx_token_mint_id {}",
+        vault_token_account.owner,
+        *token_program.key,
+        *llx_token_mint_id.owner
+      );
       return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -149,7 +157,13 @@ impl Processor {
     // msg!("storage_account.data {}", storage_account.data);
     // Transfer ownership of the temp account to this program via a derived address.
     let (pda, _bump_seed) = Pubkey::find_program_address(&[b"vault"], program_id);
-    println!("Transferring program vault token {} ownership from {} to {}", vault_token_account.key, token_account_owner.key, pda);
+    msg!(
+      "Transferring program vault token {} ownership from {} to {}",
+      vault_token_account.key, token_account_owner.key, pda
+    );
+    if !token_account_owner.is_signer {
+      return Err(ProgramError::MissingRequiredSignature);
+    }
     let account_owner_change_ix = spl_token::instruction::set_authority(
       token_program.key,
       vault_token_account.key,
@@ -159,6 +173,7 @@ impl Processor {
       token_account_owner.key,
       &[&token_account_owner.key],
     )?;
+
     invoke(
       &account_owner_change_ix,
       &[
@@ -167,7 +182,8 @@ impl Processor {
         token_program.clone(),
       ],
     )?;
-
+    let internal_account = spl_token::state::Account::unpack(&vault_token_account.data.borrow()).unwrap();
+    msg!("account {} token authority/owner {}",vault_token_account.key, internal_account.owner);
 
     msg!("Calling the token program to transfer X vault token account ownership");
     let mint_owner_change_ix = spl_token::instruction::set_authority(
@@ -224,7 +240,11 @@ impl Processor {
     }
     let storage_info = Vault::unpack_unchecked(&storage_account.data.borrow())?;
     if !storage_info.is_initialized {
-      msg!("Storage not configured! {} {}", storage_account.key, storage_info.is_initialized);
+      msg!(
+        "Storage not configured! {} {}",
+        storage_account.key,
+        storage_info.is_initialized
+      );
       return Err(VaultError::InvalidInstruction.into());
     }
 
@@ -256,7 +276,11 @@ impl Processor {
           &[&source_authority.key],
           amount,
         )?;
-        msg!("Depositing to hodl account");
+        msg!(
+          "Depositing {} to hodl account {}",
+          amount,
+          x_token_account.key
+        );
         invoke(
           &transfer_to_vault_ix,
           &[
@@ -267,6 +291,23 @@ impl Processor {
           ],
         )?;
       } else {
+        msg!(
+          "Withdrawing from hodl account {} to {}. Owner {}",
+          x_token_account.key,
+          target_token_account.key,
+          pda
+        );
+        if x_token_account.owner != token_program.key|| target_token_account.owner != token_program.key {
+          msg!("Incorrect owner {} {} {}", x_token_account.owner, target_token_account.owner, token_program.key);
+        }
+        
+        msg!("Owner {} {} {}", x_token_account.owner, target_token_account.owner, token_program.key);
+        let internal_account = spl_token::state::Account::unpack(&x_token_account.data.borrow()).unwrap();
+        msg!("internal_account {}", internal_account.owner);
+        if internal_account.owner != pda {
+          msg!("Internal account owner does not match pda {}", pda);
+          return Err(VaultError::AccountInconsistency.into());
+        }
         let transfer_to_client_ix = spl_token::instruction::transfer(
           token_program.key,
           x_token_account.key,
@@ -275,7 +316,6 @@ impl Processor {
           &[&pda],
           amount,
         )?;
-        msg!("Withdrawing from hodl account");
         invoke_signed(
           &transfer_to_client_ix,
           &[
@@ -404,6 +444,24 @@ impl Processor {
       )?;
       invoke(&instruction, &accounts)?;
     }
+    Ok(())
+  }
+
+  fn process_write_data(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    // TODO(Security): Ensure we don't screw with the other storage accounts. This should probably
+    // be moved to a separate program, like the Shared Memory program...
+    let storage_account = next_account_info(account_info_iter)?;
+    if storage_account.lamports() > 0 {
+      msg!("Data should only be written to temporary accounts");
+      // return Err(VaultError::InvalidInstruction.into()); TODO
+    }
+    if storage_account.data_len() < data.len() {
+      msg!("Need more space in storage account");
+      return Err(ProgramError::InvalidArgument);
+    }
+    // Write data into the temporary account storage.
+    storage_account.data.borrow_mut().clone_from_slice(data);
     Ok(())
   }
 }

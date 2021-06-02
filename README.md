@@ -44,16 +44,13 @@ TODO(XXX) corresponds to a TODO location in-code.
 * TODO: Cove version of https://yearn-hub.vercel.app/
 * TODO: Cove version of https://yearn.science/
 * TODO: Cleanup - fix snake_case in TS files to be proper camelCase.
+* TODO: Add production flags to strip message printing & ignore debug_crash flag.
+* TODO: Shift as much program setup logic outside of the Program Instructions as possible - instead, just verify authority et al.
 
 ### Environment Setup
 1. Install Rust from https://rustup.rs/
 2. Install Solana v1.6.2 or later from https://docs.solana.com/cli/install-solana-cli-tools#use-solanas-install-tool
 
-### Build and test for program compiled natively
-```
-$ cargo build
-$ cargo test
-```
 
 ### Build and test the program compiled for BPF
 ```

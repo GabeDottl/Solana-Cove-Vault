@@ -4,12 +4,19 @@
 # https://raw.githubusercontent.com/stableswap/stable-swap-program/master/scripts/deploy-stable-swap.sh
 set -ex
 
-cargo test-bpf 
 if [ ! -d "./target/deploy" ]; then
     ./do.sh build
 fi
 
 solana_version="1.5.1"
+
+if [[ $2 == "nobuild" ]]; then
+   echo "Note: Skipping build ------------------------------------------------------------"
+else
+   cargo build-bpf 
+fi
+
+
 
 if ! hash solana 2>/dev/null; then
     echo Installing Solana tool suite ...

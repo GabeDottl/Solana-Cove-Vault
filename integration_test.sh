@@ -1,1 +1,1 @@
-deploy.sh devnet && cd client && yarn test
+deploy.sh devnet && cd client && yarn test --detectOpenHandles

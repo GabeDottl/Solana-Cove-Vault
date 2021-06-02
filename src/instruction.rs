@@ -1,12 +1,13 @@
 use crate::error::{VaultError, VaultError::InvalidInstruction};
-use strategy_api::strategy_instruction::{create_estimate_value, create_transfer};
 use solana_program::program_error::ProgramError;
 use solana_program::{
     instruction::{AccountMeta, Instruction},
+    msg,
     program_option::COption,
     pubkey::Pubkey,
     sysvar,
 };
+use strategy_api::strategy_instruction::{create_estimate_value, create_transfer};
 
 use std::convert::TryInto;
 use std::mem::size_of;
@@ -58,6 +59,7 @@ pub enum VaultInstruction {
         strategy_program_withdraw_instruction_id: u8,
         strategy_program_estimate_instruction_id: u8,
         hodl: bool,
+        debug_crash: bool,
     },
 
     /// Deposits a given token into the vault.
@@ -74,7 +76,7 @@ pub enum VaultInstruction {
     /// 7. `[]` (Optional) X SPL account owned by Vault if hodling.
     /// 8+. `[]` Strategy extra accoounts (see StrategyInstruction#Deposit)
     /// TODO(009):: Signer pubkeys for multisignature wallets - need signer_num param.
-    Deposit { amount: u64 },
+    Deposit { amount: u64, debug_crash: bool },
 
     /// Withdraws a token from the vault.
     ///
@@ -92,6 +94,7 @@ pub enum VaultInstruction {
     /// TODO(009):: Signer pubkeys for multisignature wallets - need signer_num param.
     Withdraw {
         amount: u64, // # of derivative tokens.
+        debug_crash: bool,
     },
 
     /// Estimates the underlying value of the vault in its native asset.
@@ -105,21 +108,28 @@ pub enum VaultInstruction {
     /// 2. `[]` The Vault storage account.
     /// 3. `[]` (Optional) X SPL account owned by Vault if hodling.
     /// 4+ `[*]` Strategy extra accounts - any additional accounts required by strategy
-    EstimateValue {},
+    EstimateValue { debug_crash: bool },
 
     /// A helper utility which functions similarly to the (unlaunched) Shared Memory program.
     ///
     /// Data is read directly from the account memory.
     WriteData {
-        // data: &'a [u8]
+        debug_crash: bool, // data: &'a [u8]
     },
 }
+pub const CRASH_FLAG: u8 = 64;
 
 impl VaultInstruction {
     /// Unpacks a byte buffer into a [VaultInstruction](enum.VaultInstruction.html).
     pub fn unpack(input: &[u8]) -> Result<Self, ProgramError> {
-        let (tag, rest) = input.split_first().ok_or(InvalidInstruction)?;
-
+        let (tag_raw, rest) = input.split_first().ok_or(InvalidInstruction)?;
+        let debug_crash: bool = *tag_raw >= CRASH_FLAG;
+        let tag = if *tag_raw >= CRASH_FLAG {
+            *tag_raw - CRASH_FLAG
+        } else {
+            *tag_raw
+        };
+        msg!("Debug crash: {} {} {}", debug_crash, tag_raw, tag);
         Ok(match tag {
             0 => {
                 let hodl = *rest.get(0).unwrap();
@@ -131,6 +141,7 @@ impl VaultInstruction {
                     strategy_program_deposit_instruction_id,
                     strategy_program_withdraw_instruction_id,
                     strategy_program_estimate_instruction_id,
+                    debug_crash,
                 }
             }
             1 | 2 => {
@@ -140,15 +151,21 @@ impl VaultInstruction {
                     .map(u64::from_le_bytes)
                     .ok_or(InvalidInstruction)?;
                 match tag {
-                    1 => Self::Deposit { amount },
-                    2 => Self::Withdraw { amount },
+                    1 => Self::Deposit {
+                        amount,
+                        debug_crash,
+                    },
+                    2 => Self::Withdraw {
+                        amount,
+                        debug_crash,
+                    },
                     _ => return Err(VaultError::InvalidInstruction.into()),
                 }
             }
-            3 => Self::EstimateValue {},
+            3 => Self::EstimateValue { debug_crash },
             4 => {
                 // Data unpacked separately.
-                Self::WriteData {}
+                Self::WriteData { debug_crash }
             }
             _ => return Err(VaultError::InvalidInstruction.into()),
         })
@@ -162,28 +179,35 @@ impl VaultInstruction {
                 strategy_program_deposit_instruction_id,
                 strategy_program_withdraw_instruction_id,
                 strategy_program_estimate_instruction_id,
+                debug_crash,
             } => {
-                buf.push(0);
+                buf.push(0 + (if debug_crash { CRASH_FLAG } else { 0 }));
                 buf.push(hodl as u8);
                 buf.push(strategy_program_deposit_instruction_id);
                 buf.push(strategy_program_withdraw_instruction_id);
                 buf.push(strategy_program_estimate_instruction_id);
             }
-            &Self::Deposit { amount } => {
-                buf.push(1);
+            &Self::Deposit {
+                amount,
+                debug_crash,
+            } => {
+                buf.push(1 + (if debug_crash { CRASH_FLAG } else { 0 }));
                 buf.extend_from_slice(&amount.to_le_bytes());
             }
 
-            &Self::Withdraw { amount } => {
-                buf.push(2);
+            &Self::Withdraw {
+                amount,
+                debug_crash,
+            } => {
+                buf.push(2 + (if debug_crash { CRASH_FLAG } else { 0 }));
                 buf.extend_from_slice(&amount.to_le_bytes());
             }
-            &Self::EstimateValue {} => {
-                buf.push(3);
+            &Self::EstimateValue { debug_crash } => {
+                buf.push(3 + (if debug_crash { CRASH_FLAG } else { 0 }));
             }
             // Data packed separately.
-            &Self::WriteData {} => {
-                buf.push(4);
+            &Self::WriteData { debug_crash } => {
+                buf.push(4 + (if debug_crash { CRASH_FLAG } else { 0 }));
             }
         }
         buf
@@ -195,7 +219,7 @@ impl VaultInstruction {
         data: &[u8],
     ) -> Result<Instruction, ProgramError> {
         let accounts = vec![AccountMeta::new(*shared_memory_account, false)];
-        let mut instruction_data = Self::WriteData {}.pack();
+        let mut instruction_data = Self::WriteData { debug_crash: false }.pack();
         instruction_data.extend(data);
         Ok(Instruction {
             program_id: *vault_program_id,
@@ -231,6 +255,7 @@ impl VaultInstruction {
             strategy_program_withdraw_instruction_id,
             strategy_program_estimate_instruction_id,
             hodl,
+            debug_crash: false,
         }
         .pack();
         Ok(Instruction {
@@ -243,17 +268,21 @@ impl VaultInstruction {
     pub fn deposit(
         vault_program_id: &Pubkey,
         token_program_id: &Pubkey,
-        source_pubkey: &Pubkey,
-        target_pubkey: &Pubkey,
+        client_x_token_account: &Pubkey,
+        client_lx_token_account: &Pubkey,
         additional_account_metas: Vec<AccountMeta>,
         amount: u64,
     ) -> Result<Instruction, ProgramError> {
         return create_transfer(
-            Self::Deposit { amount }.pack(),
+            Self::Deposit {
+                amount,
+                debug_crash: false,
+            }
+            .pack(),
             vault_program_id,
             token_program_id,
-            source_pubkey,
-            target_pubkey,
+            client_x_token_account,
+            client_lx_token_account,
             additional_account_metas,
         );
     }
@@ -261,17 +290,21 @@ impl VaultInstruction {
     pub fn withdraw(
         vault_program_id: &Pubkey,
         token_program_id: &Pubkey,
-        source_pubkey: &Pubkey,
-        target_pubkey: &Pubkey,
+        client_lx_token_account: &Pubkey,
+        client_x_token_account: &Pubkey,
         additional_account_metas: Vec<AccountMeta>,
         amount: u64,
     ) -> Result<Instruction, ProgramError> {
         return create_transfer(
-            Self::Withdraw { amount }.pack(),
+            Self::Withdraw {
+                amount,
+                debug_crash: false,
+            }
+            .pack(),
             vault_program_id,
             token_program_id,
-            source_pubkey,
-            target_pubkey,
+            client_lx_token_account,
+            client_x_token_account,
             additional_account_metas,
         );
     }
@@ -283,11 +316,11 @@ impl VaultInstruction {
         additional_account_metas: Vec<AccountMeta>,
     ) -> Result<Instruction, ProgramError> {
         return create_estimate_value(
-            Self::EstimateValue {}.pack(),
+            Self::EstimateValue { debug_crash: false }.pack(),
             program_id,
             vault_program_id,
             shared_memory_account,
             additional_account_metas,
-        )
+        );
     }
 }

@@ -16,7 +16,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { getNodeConnection } from "../nodeConnection";
-import { VAULT_PROGRAM_ID, createHodlVault, deposit } from "../instruction";
+import { VAULT_PROGRAM_ID, createHodlVault, deposit, withdraw } from "../instruction";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,7 +61,7 @@ async function addLamports(
 }
 
 test("Test", async (done) => {
-  jest.setTimeout(120000);
+  jest.setTimeout(180000);
   const connection = await getNodeConnection();
   const payerAccount = new Keypair(); //Keypair.fromSecretKey(PAYER_SECRET);
   await addLamports(connection, payerAccount);
@@ -74,7 +74,7 @@ test("Test", async (done) => {
     6,
     TOKEN_PROGRAM_ID
   );
-  // const tokenlA = await Token.createMint(connection, payerAccount, payerAccount.publicKey, null, 6, TOKEN_PROGRAM_ID);
+  
   // console.log("Created mints");
   // await addLamports(connection, payerAccount, 10000000);
   const clientTokenAAccountKey = await tokenA.createAccount(
@@ -87,58 +87,58 @@ test("Test", async (done) => {
   // const vaultTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
   await addLamports(connection, payerAccount, 10000000);
   await tokenA.mintTo(clientTokenAAccountKey, payerAccount, [], 1000);
-  // console.log(`Created accounts and sent 1000 tokens to ${clientTokenAAccountKey}.`);
-  // let account_info = await tokenA.getAccountInfo(clientTokenAAccountKey);
-  // expect(account_info.amount.toString()).toEqual('1000');
-  // console.log(`Confirmed balance of 1000 tokens.`);
+  console.log(`Created accounts and sent 1000 tokens to ${clientTokenAAccountKey}.`);
+  let account_info = await tokenA.getAccountInfo(clientTokenAAccountKey);
+  expect(account_info.amount.toString()).toEqual('1000');
+  console.log(`Confirmed balance of 1000 tokens.`);
 
+  const tokenlA = await Token.createMint(connection, payerAccount, payerAccount.publicKey, null, 6, TOKEN_PROGRAM_ID);
+  // const vaultTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
+  const clientTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
   // Setup the HODL vault for tokenA
   await addLamports(connection, payerAccount, 10000000);
-  await createHodlVault(connection, payerAccount, tokenA).then(
+  await createHodlVault(connection, payerAccount, vaultTokenAAccountKey,
+    false // debug_crash
+    ).then(
     async (vaultStorageAccount) => {
       console.log("Created hodl vault");
-      deposit(
+      await deposit(
         connection,
         payerAccount,
         VAULT_PROGRAM_ID,
         vaultStorageAccount,
         clientTokenAAccountKey,
+        clientTokenlAAccountKey,
         vaultTokenAAccountKey,
-        10
-
-      ).then((_) => {
-        console.log("Deposited into vault");
+        10,
+        false // debug_crash
+      ).then(async (_) => {
+        console.log("Deposited into vault account", vaultTokenAAccountKey.toBase58());
+        await tokenA.getAccountInfo(vaultTokenAAccountKey).then(account_info => {
+          console.log("vaultTokenAAccountKey ", vaultTokenAAccountKey.toBase58(), account_info);
+          expect(account_info.amount.toString()).toEqual("10");
+          console.log("Confirmed vault balance of 10 tokens.");
+        });
+        await withdraw(
+          connection,
+          payerAccount,
+          VAULT_PROGRAM_ID,
+          vaultStorageAccount,
+          clientTokenlAAccountKey,
+          clientTokenAAccountKey,
+          vaultTokenAAccountKey,
+          10,
+          false // debug_crash
+        ).then(async (_) => {
+          console.log("Withdrew {} from vault {}", 10, vaultTokenAAccountKey);
+          console.log(`Created accounts and sent 1000 tokens to ${clientTokenAAccountKey}.`);
+          let account_info = await tokenA.getAccountInfo(vaultTokenAAccountKey);
+          expect(account_info.amount.toString()).toEqual('0');
+          console.log(`Confirmed vault balance of 0 tokens.`);
+        });
       });
     }
   );
 
   done();
 });
-
-export async function makeAccount(
-  connection: Connection,
-  payerAccount: Keypair,
-  numBytes: number,
-  programId: PublicKey
-) {
-  const dataAccount = new Keypair();
-  const rentExemption = await connection.getMinimumBalanceForRentExemption(
-    numBytes
-  );
-  const transaction = new Transaction().add(
-    SystemProgram.createAccount({
-      fromPubkey: payerAccount.publicKey,
-      newAccountPubkey: dataAccount.publicKey,
-      lamports: rentExemption,
-      space: numBytes,
-      programId: programId,
-    })
-  );
-  await sendAndConfirmTransaction(connection, transaction, [
-    payerAccount,
-    dataAccount,
-  ]);
-  let account_info = await connection.getAccountInfo(dataAccount.publicKey);
-  console.log("data_account ", dataAccount.publicKey.toBase58(), account_info);
-  return dataAccount.publicKey;
-}
