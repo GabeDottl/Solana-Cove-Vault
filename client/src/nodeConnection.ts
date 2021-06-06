@@ -16,16 +16,16 @@ let url;
 //     case 'devnet':
 //         console.log('attempting to connect to devnet')
 //         //url = 'http://34.82.57.86:8899'
-//         url = 'http://devnet.solana.com'
+//         url = 'http://api.devnet.solana.com'
 //         break;
 
 //     default:
 //         console.log('attempting to connect to local node')
 //         // url = 'http://localhost:8899'
-//         url = 'http://devnet.solana.com'
+//         url = 'http://api.devnet.solana.com'
 // }
 
-url = "http://devnet.solana.com";
+url = "http://api.devnet.solana.com";
 
 export async function getNodeConnection() {
   const connection = new Connection(url, "singleGossip");

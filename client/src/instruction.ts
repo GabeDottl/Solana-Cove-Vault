@@ -12,7 +12,7 @@ import {
   TransactionInstruction,
   SYSVAR_RENT_PUBKEY,
 } from "@solana/web3.js";
-import BN = require("bn.js");
+// import BN = require("bn.js");
 import { Token, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 export const VAULT_PROGRAM_ID = new PublicKey(
@@ -115,14 +115,92 @@ vault_instruction_layout["WriteData"] = [
   BufferLayout.struct([BufferLayout.u8("instruction_num")]),
 ];
 
+export async function e2e(connection: Connection, payerAccount: Keypair) {
+  await addLamports(connection, payerAccount);
+  console.log("Setup payer account");
+  const tokenA = await Token.createMint(
+    connection,
+    payerAccount,
+    payerAccount.publicKey,
+    null,
+    6,
+    TOKEN_PROGRAM_ID
+  );
+
+  // console.log("Created mints");
+  // await addLamports(connection, payerAccount, 10000000);
+  const clientTokenAAccountKey = await tokenA.createAccount(
+    payerAccount.publicKey
+  );
+  // const clientTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
+  const vaultTokenAAccountKey = await tokenA.createAccount(
+    payerAccount.publicKey
+  );
+  // const vaultTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
+  await addLamports(connection, payerAccount, 10000000);
+  await tokenA.mintTo(clientTokenAAccountKey, payerAccount, [], 1000);
+  console.log(`Created accounts and sent 1000 tokens to ${clientTokenAAccountKey}.`);
+  let account_info = await tokenA.getAccountInfo(clientTokenAAccountKey);
+  expect(account_info.amount.toString()).toEqual('1000');
+  console.log(`Confirmed balance of 1000 tokens.`);
+
+  const tokenlA = await Token.createMint(connection, payerAccount, payerAccount.publicKey, null, 6, TOKEN_PROGRAM_ID);
+  // const vaultTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
+  const clientTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
+  // Setup the HODL vault for tokenA
+  await addLamports(connection, payerAccount, 10000000);
+  await createHodlVault(connection, payerAccount, vaultTokenAAccountKey,
+    false // debug_crash
+  ).then(
+    async (vaultStorageAccount: Keypair) => {
+      console.log("Created hodl vault");
+      await deposit(
+        connection,
+        payerAccount,
+        VAULT_PROGRAM_ID,
+        vaultStorageAccount.publicKey,
+        clientTokenAAccountKey,
+        clientTokenlAAccountKey,
+        vaultTokenAAccountKey,
+        10,
+        false // debug_crash
+      ).then(async (_) => {
+        console.log("Deposited into vault account", vaultTokenAAccountKey.toBase58());
+        await tokenA.getAccountInfo(vaultTokenAAccountKey).then(account_info => {
+          console.log("vaultTokenAAccountKey ", vaultTokenAAccountKey.toBase58(), account_info);
+          expect(account_info.amount.toString()).toEqual("10");
+          console.log("Confirmed vault balance of 10 tokens.");
+        });
+        await withdraw(
+          connection,
+          payerAccount,
+          VAULT_PROGRAM_ID,
+          vaultStorageAccount.publicKey,
+          clientTokenlAAccountKey,
+          clientTokenAAccountKey,
+          vaultTokenAAccountKey,
+          10,
+          false // debug_crash
+        ).then(async (_) => {
+          console.log("Withdrew {} from vault {}", 10, vaultTokenAAccountKey);
+          console.log(`Created accounts and sent 1000 tokens to ${clientTokenAAccountKey}.`);
+          let account_info = await tokenA.getAccountInfo(vaultTokenAAccountKey);
+          expect(account_info.amount.toString()).toEqual('0');
+          console.log(`Confirmed vault balance of 0 tokens.`);
+        });
+      });
+    }
+  );
+}
+
+
 export async function createHodlVault(
   connection: Connection,
   payer_account: Keypair,
   vault_x_token_account: PublicKey,
   debug_crash: boolean
-) {
-  console.log("Creating HODL vault");
-  // let vault_token_account_owner = makeAccount(connection, payer_account, Token, PROGRAM_ID);
+): Promise<Keypair> {
+  let vault_storage_account = new Keypair();
   const token_vault_derivative = await Token.createMint(
     connection,
     payer_account,
@@ -131,38 +209,13 @@ export async function createHodlVault(
     6,
     TOKEN_PROGRAM_ID
   );
-
-  // const vault_vault_token_account = await token_vault_derivative.createAccount(payer_account.publicKey);
-  let vault_storage_account = await makeAccount(
-    connection,
-    payer_account,
-    1 + 1 + 32 + 32 + 8 + 32 + 1 + 1 + 1 + 36,
-    VAULT_PROGRAM_ID
-  );
-  console.log("vault_storage_account ", vault_storage_account);
-  // let vault_token_account = makeAccount(connection, payer_account, numBytes, PROGRAM_ID);
-  // let llx_token_mint_id = makeAccount(connection, payer_account, numBytes, PROGRAM_ID);
-  let instruction = initializeVaultInstruction(
-    payer_account.publicKey, // TODO: Separate owner
-    vault_storage_account,
-    vault_x_token_account,
-    token_vault_derivative.publicKey,
-    TOKEN_PROGRAM_ID,
-    VAULT_PROGRAM_ID,
-    1,
-    2,
-    3,
-    true,
-    debug_crash // debug_crash
-  );
-  let transaction = new Transaction();
-  transaction.add(instruction);
+  let transaction = await createHodlVaultTransaction(connection, vault_storage_account.publicKey, payer_account.publicKey, vault_x_token_account, token_vault_derivative.publicKey, debug_crash);
   console.log("Sending instruction to create HODL vault");
-  await lagunaSendAndConfirmTransaction(connection, transaction, [payer_account]);
+  await lagunaSendAndConfirmTransaction(connection, transaction, [payer_account, vault_storage_account]);
   console.log(
     "vault_storage_account ",
-    vault_storage_account.toBase58(),
-    connection.getAccountInfo(vault_storage_account)
+    vault_storage_account.publicKey.toBase58(),
+    connection.getAccountInfo(vault_storage_account.publicKey)
   );
   console.log(
     "vault_x_token_account ",
@@ -170,9 +223,34 @@ export async function createHodlVault(
     connection.getAccountInfo(vault_x_token_account)
   );
   console.log("Created hodl vault");
-  let account_info = await connection.getAccountInfo(vault_storage_account);
-  console.log("data_account ", vault_storage_account.toBase58(), account_info);
+  let account_info = await connection.getAccountInfo(vault_storage_account.publicKey);
+  console.log("data_account ", vault_storage_account.publicKey.toBase58(), account_info);
   return vault_storage_account;
+}
+
+export function createHodlDepositInstruciton(
+  payer_account: PublicKey,
+  strategy_program: PublicKey,
+  vault_account: PublicKey,
+  client_x_token_account: PublicKey,
+  client_lx_token_account: PublicKey,
+  vault_x_token_account: PublicKey,
+  amount: number,
+  debug_crash: boolean) : TransactionInstruction {
+    return depositInstruction(
+      VAULT_PROGRAM_ID,
+      TOKEN_PROGRAM_ID,
+      client_x_token_account,
+      client_lx_token_account,
+      [
+        { isWritable: false, pubkey: payer_account, isSigner: true },
+        { isWritable: true, pubkey: vault_account, isSigner: false },
+        { isWritable: false, pubkey: strategy_program, isSigner: false },
+        { isWritable: true, pubkey: vault_x_token_account, isSigner: false },
+      ],
+      amount,
+      debug_crash
+    );
 }
 
 export async function deposit(
@@ -190,14 +268,43 @@ export async function deposit(
   let transaction = new Transaction();
   console.log("payer_account {}", payer_account.publicKey.toBase58());
   transaction.add(
-    depositInstruction(
+    createHodlDepositInstruciton(payer_account.publicKey ,strategy_program ,vault_account ,client_x_token_account ,client_lx_token_account ,vault_x_token_account ,amount, debug_crash)
+  );
+  console.log("vault_x_token_account ", vault_x_token_account.toBase58());
+  await lagunaSendAndConfirmTransaction(connection, transaction, [payer_account]);
+}
+
+
+export async function createHodlWithdrawInstruction(
+  connection: Connection,
+  payer_account: Keypair,
+  strategy_program: PublicKey,
+  vault_account: PublicKey,
+  client_lx_token_account: PublicKey,
+  client_x_token_account: PublicKey,
+  vault_x_token_account: PublicKey,
+  amount: number,
+  debug_crash: boolean
+): Promise<void> {
+  console.log("vault_account ", vault_account.toBase58());
+  let transaction = new Transaction();
+  console.log("payer_account {}", payer_account.publicKey.toBase58());
+  console.log("client_x_token_account {}", client_x_token_account.toBase58());
+  let _, bump_pda = await PublicKey.findProgramAddress([Buffer.from("vault", 'utf-8')], VAULT_PROGRAM_ID);
+  let pda = bump_pda[0];
+  console.log("pda", pda);
+
+  console.log(`client_lx_token_account ${client_lx_token_account}`);
+  transaction.add(
+    withdrawInstruction(
       VAULT_PROGRAM_ID,
       TOKEN_PROGRAM_ID,
-      client_x_token_account,
+      // Note the source is now the vault - not the client.
       client_lx_token_account,
+      client_x_token_account,
       [
-        { isWritable: false, pubkey: payer_account.publicKey, isSigner: true },
-        { isWritable: true, pubkey: vault_account, isSigner: false },
+        { isWritable: false, pubkey: pda, isSigner: false },
+        { isWritable: false, pubkey: vault_account, isSigner: false },
         { isWritable: false, pubkey: strategy_program, isSigner: false },
         { isWritable: true, pubkey: vault_x_token_account, isSigner: false },
       ],
@@ -205,7 +312,6 @@ export async function deposit(
       debug_crash
     )
   );
-  console.log("vault_x_token_account ", vault_x_token_account.toBase58());
   await lagunaSendAndConfirmTransaction(connection, transaction, [payer_account]);
 }
 
@@ -247,6 +353,50 @@ export async function withdraw(
     )
   );
   await lagunaSendAndConfirmTransaction(connection, transaction, [payer_account]);
+}
+
+
+export async function createHodlVaultTransaction(
+  connection: Connection,
+  vault_storage_account: PublicKey,
+  payer_account_public_key: PublicKey,
+  vault_x_token_account: PublicKey,
+  token_vault_derivative: PublicKey,
+  debug_crash: boolean
+) {
+  console.log("Creating HODL vault");
+
+
+  // const vault_vault_token_account = await token_vault_derivative.createAccount(payer_account_public_key);
+  let transaction = new Transaction();
+  let instruction = await createAccountInstruction
+    (
+      connection,
+      vault_storage_account,
+      payer_account_public_key,
+      1 + 1 + 32 + 32 + 8 + 32 + 1 + 1 + 1 + 36,
+      VAULT_PROGRAM_ID
+    );
+  transaction.add(instruction);
+  console.log("vault_storage_account ", vault_storage_account);
+  // let vault_token_account = createAccount(connection, payer_account_public_key, numBytes, PROGRAM_ID);
+  // let llx_token_mint_id = createAccount(connection, payer_account_public_key, numBytes, PROGRAM_ID);
+  instruction = initializeVaultInstruction(
+    payer_account_public_key, // TODO: Separate owner
+    vault_storage_account,
+    vault_x_token_account,
+    token_vault_derivative,
+    TOKEN_PROGRAM_ID,
+    VAULT_PROGRAM_ID,
+    1,
+    2,
+    3,
+    true,
+    debug_crash // debug_crash
+  );
+  transaction.add(instruction);
+
+  return transaction;
 }
 
 // Note: These instructions mirror instruction.rs.
@@ -388,7 +538,7 @@ function withdrawInstruction(
     additional_account_metas
   );
 }
-function createTransferInstruction(
+export function createTransferInstruction(
   data: Buffer,
   program_id: PublicKey,
   token_program_id: PublicKey,
@@ -419,7 +569,7 @@ function createTransferInstruction(
 
 // Utility functions -------------------------------------------------------------------------------
 
-async function lagunaSendAndConfirmTransaction(connection: Connection, transaction: Transaction, signers: Signer[]): Promise<void> {
+export async function lagunaSendAndConfirmTransaction(connection: Connection, transaction: Transaction, signers: Signer[]): Promise<void> {
   await sendAndConfirmTransaction(connection, transaction, signers,
     {
       commitment: 'singleGossip',
@@ -453,36 +603,26 @@ function encodeInstructionData(
   return b.slice(0, span);
 }
 
-export async function createAccount(
+export async function createAccountInstruction(
   connection: Connection,
-  payer_account: Keypair,
+  dataAccount: PublicKey,
+  payerAccountPublicKey: PublicKey,
   numBytes: number,
   programId: PublicKey
-) {
-  const dataAccount = new Keypair();
+) : Promise<TransactionInstruction> {
   const rentExemption = await connection.getMinimumBalanceForRentExemption(
     numBytes
   );
-  const transaction = new Transaction().add(
-    SystemProgram.createAccount({
-      fromPubkey: payer_account.publicKey,
-      newAccountPubkey: dataAccount.publicKey,
-      lamports: rentExemption,
-      space: numBytes,
-      programId: programId,
-    })
-  );
-
-  await lagunaSendAndConfirmTransaction(connection, transaction, [
-    payer_account,
-    dataAccount,
-  ]);
-
-  return dataAccount.publicKey;
+  return SystemProgram.createAccount({
+    fromPubkey: payerAccountPublicKey,
+    newAccountPubkey: dataAccount,
+    lamports: rentExemption,
+    space: numBytes,
+    programId: programId,
+  });
 }
 
-
-export async function makeAccount(
+export async function createAccount(
   connection: Connection,
   payerAccount: Keypair,
   numBytes: number,
@@ -510,3 +650,39 @@ export async function makeAccount(
   return dataAccount.publicKey;
 }
 
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function addLamports(
+  connection: Connection,
+  account: Keypair,
+  lamports = 10000000
+) {
+  if (lamports <= (await connection.getBalance(account.publicKey))) {
+    const count = await connection.getBalance(account.publicKey);
+    console.log(`${count} lamports held by payer`);
+    return account;
+  }
+
+  for (let retry = 0; retry < 10; retry++) {
+    try {
+      await connection.requestAirdrop(account.publicKey, lamports);
+      break;
+    } catch (e) {
+      console.log(`Airdrop failed: ${e}`);
+    }
+  }
+
+  for (let retry = 0; retry < 10; retry++) {
+    await sleep(500);
+    if (lamports <= (await connection.getBalance(account.publicKey))) {
+      const count = await connection.getBalance(account.publicKey);
+      console.log(`${count} lamports held by payer`);
+      return account;
+    }
+    console.log(`Airdrop retry ${retry}`);
+  }
+  throw new Error(`Airdrop of ${lamports} failed`);
+}
