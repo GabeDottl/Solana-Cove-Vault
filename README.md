@@ -1,3 +1,9 @@
+January 2022, Author's note: This code was created initially concieved as an SSI platform on Solana (similar to Civic.com) - see the older commits. It evolved into a defi Vault (under the name 'Laguna Finance Cove') for the Solana Season hackathon Summer 2021 before being abandoned (team disbandoned). It's now public source, closed license to serve as an example (and perhaps platform) for creating new Solana Defi projects.
+
+Hack & Fork away :) - if you want to use the code commercially, I'm happy to adapt/rewrite it to meet your Solana defi product's needs - let me know what you want built, and I'll give you a quote for code + license agreement. Email: gabe@tardigrades.email
+
+Tags: Yearn Ribbon Finance Maker Maple Finance Curve Finance Aave Compound lending protocol solana rust Instadapp Uniswap etc.
+
 # Cove
 Cove is a platform for Laguna (Solana) Vaults.
 
