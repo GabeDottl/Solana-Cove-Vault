@@ -58,3 +58,5 @@ $ cargo build-bpf
 $ cargo test-bpf
 ```
 cd ~/code/laguna/cove && deploy.sh devnet && cd client && yarn test
+
+gilgameshcoder note: i am gabedottl
