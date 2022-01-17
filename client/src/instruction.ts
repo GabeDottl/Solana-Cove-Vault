@@ -128,7 +128,7 @@ export async function e2e(connection: Connection, payerAccount: Keypair) {
   );
 
   // console.log("Created mints");
-  // await addLamports(connection, payerAccount, 10000000);
+  // await addLamports(connection, payerAccount, 100000);
   const clientTokenAAccountKey = await tokenA.createAccount(
     payerAccount.publicKey
   );
@@ -137,7 +137,7 @@ export async function e2e(connection: Connection, payerAccount: Keypair) {
     payerAccount.publicKey
   );
   // const vaultTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
-  await addLamports(connection, payerAccount, 10000000);
+  await addLamports(connection, payerAccount, 100000);
   await tokenA.mintTo(clientTokenAAccountKey, payerAccount, [], 1000);
   console.log(`Created accounts and sent 1000 tokens to ${clientTokenAAccountKey}.`);
   let account_info = await tokenA.getAccountInfo(clientTokenAAccountKey);
@@ -148,7 +148,7 @@ export async function e2e(connection: Connection, payerAccount: Keypair) {
   // const vaultTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
   const clientTokenlAAccountKey = await tokenlA.createAccount(payerAccount.publicKey);
   // Setup the HODL vault for tokenA
-  await addLamports(connection, payerAccount, 10000000);
+  await addLamports(connection, payerAccount, 100000);
   await createHodlVault(connection, payerAccount, vaultTokenAAccountKey,
     false // debug_crash
   ).then(
@@ -658,8 +658,9 @@ function sleep(ms: number) {
 export async function addLamports(
   connection: Connection,
   account: Keypair,
-  lamports = 10000000
+  lamports = 100000
 ) {
+  console.log(`Balance (lamports): ${(await connection.getBalance(account.publicKey))}`);
   if (lamports <= (await connection.getBalance(account.publicKey))) {
     const count = await connection.getBalance(account.publicKey);
     console.log(`${count} lamports held by payer`);
@@ -674,10 +675,11 @@ export async function addLamports(
       console.log(`Airdrop failed: ${e}`);
     }
   }
-
+  
+  console.log(`Balance (lamports): ${(await connection.getBalance(account.publicKey))}`);
   for (let retry = 0; retry < 10; retry++) {
-    await sleep(500);
-    if (lamports <= (await connection.getBalance(account.publicKey))) {
+    await sleep(2000);
+    if (lamports >= (await connection.getBalance(account.publicKey))) {
       const count = await connection.getBalance(account.publicKey);
       console.log(`${count} lamports held by payer`);
       return account;

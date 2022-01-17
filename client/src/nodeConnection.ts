@@ -25,7 +25,7 @@ let url;
 //         url = 'http://api.devnet.solana.com'
 // }
 
-url = "http://api.devnet.solana.com";
+url = process.env.DEVNET_RPC
 
 export async function getNodeConnection() {
   const connection = new Connection(url, "singleGossip");
