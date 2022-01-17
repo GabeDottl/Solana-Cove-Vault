@@ -1,8 +1,8 @@
 {
-  "name": "@laguna_finance/client",
+  "name": "@tardigrades/client",
   "version": "0.0.1",
-  "description": "Laguna Finance JS API",
-  "homepage": "https://laguna.finance",
+  "description": "Deprecated JS API (formerly Laguna Finance Cove Client API)",
+  "homepage": "https://tardigrades.online",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "files": [
