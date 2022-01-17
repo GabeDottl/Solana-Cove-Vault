@@ -20,8 +20,7 @@ import { VAULT_PROGRAM_ID, createHodlVault, deposit, withdraw, e2e, addLamports 
 // Load .env
 const dotenv = require('dotenv');
 dotenv.config();
-console.log(`${process.env}`);
-console.log(`${process.env.TEST}`);
+console.log(`DEVNET_WALLET (from node .env): ${process.env.DEVNET_WALLET}`);
 
 // Assert that .env loaded correctly
 var assert = require('assert');
@@ -31,35 +30,23 @@ console.log("loaded .env");
 test("Test", async (done) => {
   jest.setTimeout(180000);
   const connection = await getNodeConnection();
-  // console.log(`${process.env}`);
-  console.log(`DEVNET_WALLET ${process.env.DEVNET_WALLET}`);
-  
+  /// Secret from DevNet wallet.
   var fs = require('fs');
   let fileData = fs.readFileSync(process.env.DEVNET_WALLET);
   console.log(`fileData ${fileData}`);
+  // Strip brackets
   fileData = String(fileData).slice(1,-1)
+  // Convert to SecretKey input format.
   console.log(`fileData ${fileData}`);
   let int_array = fileData.split(',').map(function(item) {
     return parseInt(item, 10);
   });
-  int_array = Uint8Array.from(int_array); // .slice(32,64);
+
+  int_array = Uint8Array.from(int_array);
   console.log(`int_array: ${int_array}`);
-  // TODO: Renenable
+
   const payerAccount = Keypair.fromSecretKey(int_array);
   await e2e(connection, payerAccount);
-
-  // function getByteArray(filePath){
-  //     let result = []
-  //     for (var i = 0; i < fileData.length; i+=2)
-  //       result.push('0x'+fileData[i]+''+fileData[i+1])
-  //     return result;
-  // }
-  
-  // dotenv.config({})
-  // result = 
-  // console.log(getByteArray(''))
-
-  
 
   done();
 });
