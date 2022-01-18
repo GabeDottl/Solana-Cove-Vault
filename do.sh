@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 # Copied from: https://github.com/stableswap/stable-swap-program/blob/0587ca180d3aea921ad40c49487ba6618c755d78/do.sh
+# Originally licensed under Apache-2.0 License - license preserved within this file.
+
 set -ex
 cd "$(dirname "$0")"
 
